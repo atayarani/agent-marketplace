@@ -1,0 +1,13 @@
+{
+  "name": "agent-marketplace",
+  "owner": {
+    "name": "Ali"
+  },
+  "description": "Personal toolkit. Sub-plugins shared across Claude Code, Codex, and Gemini CLI.",
+  "plugins": [
+    {
+      "name": "reviewers",
+      "source": "./plugins/reviewers"
+    }
+  ]
+}
