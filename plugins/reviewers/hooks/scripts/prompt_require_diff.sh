@@ -11,7 +11,8 @@ if ! git diff --staged --quiet; then
   exit 0
 fi
 
-default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
+ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" || ref=""
+default_branch="${ref#origin/}"
 if [[ -z "$default_branch" ]]; then
   for candidate in main master; do
     if git show-ref --verify --quiet "refs/heads/$candidate"; then
