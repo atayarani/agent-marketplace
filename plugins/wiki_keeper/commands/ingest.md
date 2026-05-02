@@ -1,9 +1,11 @@
 ---
 description: Ingest a single source into the wiki — summarize, integrate, log
-argument-hint: <path or URL of the source>
+argument-hint: @path/to/source.md | https://example.com/article
 ---
 
 Run the full ingest pipeline for one source. Default to one source per invocation; the user can batch later if they want.
+
+`$ARGUMENTS` may be an `@`-mention path (Claude Code TAB-completes these against the working directory and pre-loads the file), a bare relative or absolute path, or a URL. Detect which and proceed.
 
 ## Steps
 

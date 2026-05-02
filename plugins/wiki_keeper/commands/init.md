@@ -1,9 +1,11 @@
 ---
 description: Scaffold a new LLM wiki vault in the current directory
-argument-hint: [optional vault name or path]
+argument-hint: [path/to/new-vault | @path/to/existing-dir]
 ---
 
 Initialize an LLM-maintained wiki vault. Use sensible defaults but ask before overwriting any existing files.
+
+`$ARGUMENTS` may be a bare path to a directory to create, an `@`-mention pointing at an existing directory (TAB-completes against the working directory), or empty (use the current working directory).
 
 ## Steps
 

@@ -1,9 +1,11 @@
 ---
 description: Query the wiki and optionally file the answer back as a new page
-argument-hint: <question>
+argument-hint: <question> — use @page.md inside to pin a specific wiki page
 ---
 
 Answer a question against the wiki, then decide whether the answer is durable enough to file back.
+
+`$ARGUMENTS` is free-text. Users may embed `@`-mention paths inside the question to pin specific wiki pages, sources, or notes into context — Claude Code TAB-completes those against the working directory and pre-loads them. Treat any `@`-resolved files as authoritative starting points for the answer.
 
 ## Steps
 
