@@ -1,10 +1,10 @@
 {
   "name": "agent-marketplace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Personal toolkit shared across Claude Code, Codex, and Gemini CLI.",
   "contextFileName": "AGENTS.md",
-  "commands": "./plugins/reviewers/commands/",
-  "skills": "./plugins/reviewers/skills/",
-  "subagents": "./plugins/reviewers/agents/",
+  "commands": "./gemini/commands/",
+  "skills": "./gemini/skills/",
+  "subagents": "./gemini/subagents/",
   "mcpServers": {}
 }
