@@ -52,26 +52,27 @@ common YouTube URL shapes — `watch?v=`, `youtu.be/`, `/shorts/`, `/embed/`,
 ## Saving into a wiki vault
 
 If you're inside a `wiki_keeper`-managed vault (i.e. `AGENTS.md` describes
-one), write the raw transcript to `sources/raw/transcripts/<slug>.md` with
-frontmatter capturing the source URL, video id, channel, fetch date, and
-language. Treat that file as immutable per the vault's source rules. Then
-hand off to the normal ingest pipeline — synthesis goes into the wiki, not
-the raw transcript file.
+one), the vault's own schemas decide where files land and what shape the
+metadata takes. **Read those schemas before writing.** Start with the
+vault's `AGENTS.md` and any file it points at under `system/schemas/` —
+typically `system/schemas/youtube-ingestion.md` and
+`system/schemas/source-normalization.md`. Follow whatever raw path,
+basename rule, sidecar layout, and frontmatter shape they prescribe, and
+treat the written files as immutable per the vault's source rules. Then
+hand off to the normal ingest pipeline — synthesis goes into the wiki,
+not the raw transcript file.
 
-A reasonable frontmatter:
+If the vault has no YouTube-specific schema, fall back to this generic
+pattern:
 
-```yaml
----
-source_type: youtube-transcript
-url: https://www.youtube.com/watch?v=<id>
-video_id: <id>
-title: <video title>
-channel: <channel>
-fetched: <YYYY-MM-DD>
-language: <code>
-auto_generated: <true|false>
----
-```
+- raw transcript under `sources/raw/` in whatever subdirectory the vault
+  uses for video sources (look at sibling files; do not invent a new tree)
+- basename is the 11-character video id, so transcript and any metadata
+  sidecar pair unambiguously (e.g. `<video-id>.txt` + `<video-id>.json`)
+- if you must capture metadata inline instead of in a sidecar, use
+  frontmatter with at minimum: `source_type`, `url`, `video_id`, `title`,
+  `channel`, `captured` (YYYY-MM-DD), `language`, `transcript_type`
+  (manual / auto)
 
 If the vault is uninitialized, just print the transcript to the user — do
 not invent a directory layout.
