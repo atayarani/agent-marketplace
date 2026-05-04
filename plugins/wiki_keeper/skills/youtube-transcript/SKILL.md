@@ -84,7 +84,11 @@ pattern:
 - raw transcript under `sources/raw/` in whatever subdirectory the vault
   uses for video sources (look at sibling files; do not invent a new tree)
 - basename is the 11-character video id, so transcript and any metadata
-  sidecar pair unambiguously (e.g. `<video-id>.txt` + `<video-id>.json`)
+  sidecar pair unambiguously (e.g. `<video-id>.md` + `<video-id>.info.json`)
+- prefer `.md` over `.txt` for the transcript so Obsidian wikilinks of
+  the form `[[<basename>]]` resolve without an extension hint — auto-
+  generated captions have no Markdown structure to break, and any future
+  frontmatter wrapping is non-disruptive
 - if you must capture metadata inline instead of in a sidecar, use
   frontmatter with at minimum: `source_type`, `url`, `video_id`, `title`,
   `channel`, `captured` (YYYY-MM-DD), `language`, `transcript_type`
