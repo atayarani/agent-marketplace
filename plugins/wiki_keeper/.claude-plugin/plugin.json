@@ -1,5 +1,5 @@
 {
   "name": "wiki_keeper",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Discipline for LLM-maintained personal wikis. Ingest sources, query the wiki, file durable insights back, run health audits, and enrich book lists from public APIs."
 }

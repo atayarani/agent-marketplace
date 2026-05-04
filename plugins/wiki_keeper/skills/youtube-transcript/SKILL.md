@@ -15,6 +15,22 @@ prerequisite is `uv`.
   text before you can summarize.
 - The user wants to compare a video's claims against the wiki.
 
+## Default flow
+
+Run these steps in order — don't stop early:
+
+1. Prerequisite check (below).
+2. Fetch the transcript.
+3. If you're inside a `wiki_keeper`-managed vault (`AGENTS.md` exists),
+   save the raw transcript per the vault's schemas (see "Saving into a
+   wiki vault").
+4. **Offer to hand the raw path to `/wiki_keeper:ingest`** (see "Offer
+   to hand off to ingest"). This step is mandatory whenever step 3 ran;
+   do not skip it just because the user's original phrasing didn't
+   explicitly mention ingestion.
+5. If the user declines or the vault is uninitialized, surface the
+   transcript or path and stop.
+
 ## Prerequisite check
 
 `uv` must be available. If `command -v uv` fails, tell the user and stop —
@@ -101,11 +117,18 @@ the `wiki-archivist` subagent automatically — let it.
 If the user declines, leave the raw file in place and report the path so
 they can pick it up later.
 
-Skip the offer entirely when:
+The offer is mandatory in every other case. Do **not** skip it because
+the user's original phrasing was "transcript only" or "just give me the
+text" — they don't see the wiki bookkeeping you'd otherwise leave them
+to do by hand. The offer is one line and they can decline in one word.
 
-- the vault is uninitialized (no `AGENTS.md`)
-- the user originally asked only for the transcript text, not for
-  ingestion (e.g. "show me the transcript of <url>" with no wiki context)
+Skip only when:
+
+- the vault is uninitialized (no `AGENTS.md`) — there is no ingest
+  pipeline to hand off to
+- you were spawned **by** `/wiki_keeper:ingest` (i.e. ingest already has
+  the source path and is calling this skill to fetch the text) — the
+  caller will continue the pipeline, so re-prompting would loop
 
 ## Caveats
 
