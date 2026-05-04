@@ -77,38 +77,33 @@ pattern:
 If the vault is uninitialized, just print the transcript to the user — do
 not invent a directory layout.
 
-## Offer to normalize
+## Offer to hand off to ingest
 
-After the raw file is written, **offer to normalize in the same turn**.
-Don't make the user copy/paste the path into a separate `/wiki_keeper:ingest`
-invocation just to clear the next bookkeeping step. Phrase the offer
-concretely so it's a one-word yes/no:
+After the raw file is written, **offer to hand the raw path to
+`/wiki_keeper:ingest` in the same turn**. Don't make the user copy/paste
+the path into a separate invocation just to clear the next bookkeeping
+step. Phrase the offer as a one-word yes/no:
 
-> "Saved raw transcript to `<raw-path>`. Want me to normalize it into
-> `<normalized-path>` now?"
+> "Saved raw transcript to `<raw-path>`. Run `/wiki_keeper:ingest` on it
+> now?"
 
-If the user accepts:
+This skill does **not** normalize the transcript itself — that lives in
+`/wiki_keeper:ingest`, which already knows how to read the vault's
+schemas, write the normalized file, decide on wiki promotion, and append
+a log entry. Two paths to the same goal would drift; one path keeps the
+pipeline coherent.
 
-1. Re-read the vault's `system/schemas/source-normalization.md` and any
-   YouTube-specific schema (`system/schemas/youtube-ingestion.md`) for
-   the normalized path, frontmatter shape, and body structure. Follow
-   them; do not invent a layout.
-2. Write the normalized file. Preserve timestamps if the schema asks
-   for them. Strip duplicate caption fragments only when meaning is
-   preserved. Do **not** add synthesis, claims, or commentary — that
-   belongs in `wiki/`, not `sources/normalized/`.
-3. Link the normalized file back to the raw transcript and metadata
-   files (per the vault's provenance rule).
-4. Stop. Do not promote to wiki pages in the same turn unless the user
-   asks. Filing-back happens during ingest/query, not here.
+If the user accepts, follow the steps in
+`commands/ingest.md` (`/wiki_keeper:ingest`) with the raw transcript
+path as the source argument. For long transcripts, ingest will route to
+the `wiki-archivist` subagent automatically — let it.
 
-If the user declines, leave the raw file in place and note the path so
+If the user declines, leave the raw file in place and report the path so
 they can pick it up later.
 
 Skip the offer entirely when:
 
 - the vault is uninitialized (no `AGENTS.md`)
-- the vault has no `sources/normalized/` tree
 - the user originally asked only for the transcript text, not for
   ingestion (e.g. "show me the transcript of <url>" with no wiki context)
 
