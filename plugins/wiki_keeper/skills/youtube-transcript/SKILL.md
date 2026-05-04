@@ -77,6 +77,41 @@ pattern:
 If the vault is uninitialized, just print the transcript to the user — do
 not invent a directory layout.
 
+## Offer to normalize
+
+After the raw file is written, **offer to normalize in the same turn**.
+Don't make the user copy/paste the path into a separate `/wiki_keeper:ingest`
+invocation just to clear the next bookkeeping step. Phrase the offer
+concretely so it's a one-word yes/no:
+
+> "Saved raw transcript to `<raw-path>`. Want me to normalize it into
+> `<normalized-path>` now?"
+
+If the user accepts:
+
+1. Re-read the vault's `system/schemas/source-normalization.md` and any
+   YouTube-specific schema (`system/schemas/youtube-ingestion.md`) for
+   the normalized path, frontmatter shape, and body structure. Follow
+   them; do not invent a layout.
+2. Write the normalized file. Preserve timestamps if the schema asks
+   for them. Strip duplicate caption fragments only when meaning is
+   preserved. Do **not** add synthesis, claims, or commentary — that
+   belongs in `wiki/`, not `sources/normalized/`.
+3. Link the normalized file back to the raw transcript and metadata
+   files (per the vault's provenance rule).
+4. Stop. Do not promote to wiki pages in the same turn unless the user
+   asks. Filing-back happens during ingest/query, not here.
+
+If the user declines, leave the raw file in place and note the path so
+they can pick it up later.
+
+Skip the offer entirely when:
+
+- the vault is uninitialized (no `AGENTS.md`)
+- the vault has no `sources/normalized/` tree
+- the user originally asked only for the transcript text, not for
+  ingestion (e.g. "show me the transcript of <url>" with no wiki context)
+
 ## Caveats
 
 - Auto-generated transcripts have no punctuation and no speaker labels.
