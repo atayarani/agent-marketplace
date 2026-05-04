@@ -1,6 +1,6 @@
 ---
 description: Run a parallel review on a GitHub PR
-argument-hint: <PR number> [reviewers]
+argument-hint: "<PR number> [reviewers]"
 ---
 
 Run the deep-review skill against the specified PR.

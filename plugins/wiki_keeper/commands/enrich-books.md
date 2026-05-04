@@ -1,6 +1,6 @@
 ---
 description: Backfill author + source URL + blurb on `lists/media/books/items/*.md` from public book APIs (Open Library, Wikipedia, Hardcover, Google Books). Idempotent and non-destructive.
-argument-hint: [--limit N] [--items GLOB] [--sources hardcover,openlibrary,wikipedia,googlebooks] [--status any|tbr|reading|read|...] [--reset] [--dry-run]
+argument-hint: "[--limit N] [--items GLOB] [--sources hardcover,openlibrary,wikipedia,googlebooks] [--status any|tbr|reading|read|...] [--reset] [--dry-run]"
 ---
 
 Enrich the user's TBR (or other-status) book items with author, publication year, source URL, and a `## Blurb` description. The skill ships a script at `${CLAUDE_PLUGIN_ROOT}/skills/book-enrichment/enrich_books.py` that does the work. Use the `book-enrichment` skill's SKILL.md for full reference.

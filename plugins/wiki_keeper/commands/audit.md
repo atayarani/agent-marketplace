@@ -1,6 +1,6 @@
 ---
 description: Health-check the wiki — contradictions, stale claims, orphans, gaps
-argument-hint: [scope: full | concepts | claims | entities | recent]
+argument-hint: "[scope: full | concepts | claims | entities | recent]"
 ---
 
 Run a maintenance audit on the wiki. Identify drift; do not fix it in the same pass.

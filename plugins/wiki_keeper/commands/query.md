@@ -1,6 +1,6 @@
 ---
 description: Query the wiki and optionally file the answer back as a new page
-argument-hint: <question> — use @page.md inside to pin a specific wiki page
+argument-hint: "<question> — use @page.md inside to pin a specific wiki page"
 ---
 
 Answer a question against the wiki, then decide whether the answer is durable enough to file back.

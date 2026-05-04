@@ -1,6 +1,6 @@
 ---
 description: Run a parallel review on staged changes
-argument-hint: [reviewers: security, performance, style, full]
+argument-hint: "[reviewers: security, performance, style, full]"
 ---
 
 Run the deep-review skill against the currently staged changes.

@@ -1,6 +1,6 @@
 ---
 description: Ingest a single source into the wiki — summarize, integrate, log
-argument-hint: @path/to/source.md | https://example.com/article
+argument-hint: "@path/to/source.md | https://example.com/article"
 ---
 
 Run the full ingest pipeline for one source. Default to one source per invocation; the user can batch later if they want.
