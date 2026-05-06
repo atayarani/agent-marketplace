@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/protect_raw_sources.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/protect_normalized_synthesis.sh\""
           }
         ]
       }
