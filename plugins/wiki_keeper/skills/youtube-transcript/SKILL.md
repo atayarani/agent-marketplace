@@ -36,6 +36,13 @@ Run these steps in order — don't stop early:
 `uv` must be available. If `command -v uv` fails, tell the user and stop —
 do not silently fall back to `pip install` against the global interpreter.
 
+`yt-dlp` is an **optional** prerequisite — only used as a fallback when the
+standard `youtube-transcript-api` path hits a YouTube IP-block (see
+"IP-block fallback" below). Install with `brew install yt-dlp` or your
+preferred package manager. The script works without it; it just loses the
+fallback path and will surface a hint pointing the user at `yt-dlp` if
+the IP-block scenario fires.
+
 ## How to invoke
 
 The script lives next to this SKILL.md. Resolve its absolute path from the
@@ -56,14 +63,54 @@ common YouTube URL shapes — `watch?v=`, `youtu.be/`, `/shorts/`, `/embed/`,
 - `--languages en es ja` — preferred language codes, in priority order. Defaults to `en`.
 - `--format text|json|srt|vtt` — output format. Defaults to `text`.
 - `--list` — print available transcripts (language code, label, manual vs auto-generated, translatability) and exit. Use this first when `--languages en` returns no transcript.
+- `--no-fallback` — disable the yt-dlp VTT fallback path (see "IP-block fallback" below). Use only when you specifically want the API path's behavior — e.g., to confirm an IP-block status.
 
 ### Exit codes
 
-- `0` success
+- `0` success (may have used the yt-dlp fallback path; check stderr for the `note:` line that signals fallback activation)
 - `2` no transcript in the requested languages (try `--list`)
 - `3` transcripts disabled for the video
 - `4` video unavailable
-- `5` other retrieval failure
+- `5` other retrieval failure (including: API IP-blocked AND yt-dlp fallback also failed or unavailable)
+
+## IP-block fallback
+
+The standard `youtube-transcript-api` path can hit YouTube IP-blocks after
+heavy use — especially when many transcripts are fetched in a short period.
+The error looks like *"YouTube is blocking requests from your IP"* / a
+`RequestBlocked` exception.
+
+When the script detects this specific error class (and `--no-fallback` is
+not set), it falls back to **`yt-dlp --write-auto-subs`** to fetch caption
+VTT directly via the YouTube web player API. yt-dlp uses different
+infrastructure and is typically not subject to the same blocks. The VTT is
+post-processed to dedup the alternating animation / stable cue pairs that
+auto-captioned VTT files contain, then formatted to match the API path's
+output (text / json / srt / vtt all supported).
+
+The fallback emits a one-line `note:` to stderr when it activates so
+callers know which path produced the result. Stdout output is identical
+to the API path.
+
+**The fallback only handles the `--list`-less fetch path.** Listing
+available transcripts (`--list`) still uses the API and will fail under
+an IP-block; if you need to enumerate captions during a block, use
+`yt-dlp --list-subs <url>` directly.
+
+**Limitations** of the fallback:
+
+- Auto-captions only. yt-dlp's `--write-auto-subs` fetches the
+  YouTube-generated captions, not manual ones. If the video has manual
+  captions and you specifically want them, the API path is the only way.
+- Single-language pick. yt-dlp picks one language from the comma-joined
+  `--sub-langs` list; the script returns the first VTT it finds. Typically
+  fine since most callers pass a single language.
+- No translation support. The API path supports `is_translatable`; the
+  fallback doesn't.
+
+If the API fails with an IP-block AND the fallback fails (no yt-dlp
+available, no captions, or any other yt-dlp error), exit code `5` is
+returned with both errors logged to stderr.
 
 ## Saving into a wiki vault
 
