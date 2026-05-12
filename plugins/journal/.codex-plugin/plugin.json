@@ -1,5 +1,5 @@
 {
   "name": "journal",
-  "version": "0.1.0",
-  "description": "BuJo-style daily journaling. Creates today's entry from a Rapid-Logging template using Carroll's four-signifier vocabulary (note dash, action dot, event circle, mood equals) with AM/PM mood-equals bookends. Capture-layer only — manual migration per BuJo discipline."
+  "version": "0.2.0",
+  "description": "BuJo-style daily journaling. Creates today's entry from a Rapid-Logging template using Carroll's four-signifier vocabulary (note dash, action dot, event circle, mood equals) and dot-state-marker transformations (✕ complete / → migrated / » exported / ~~•~~ dropped). Default mode is silent capture; opt-in coaching walks the user through Carroll's daily reflection ritual (carry-forward / mark-complete / migrate / delegate / drop). Capture-layer only — manual migration per BuJo discipline."
 }

@@ -5,8 +5,4 @@ updated: YYYY-MM-DD
 
 # YYYY-MM-DD
 
-= 
-
 – 
-
-= 
