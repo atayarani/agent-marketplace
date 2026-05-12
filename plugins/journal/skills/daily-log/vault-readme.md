@@ -30,7 +30,7 @@ Daily reflection in Carroll's method is an **activity**, not a positional entry 
 
 **Evening**: review today's open `•` actions. Mark complete the ones you took. For the rest, decide: migrate to a future day, delegate, or drop. Then look over the whole day and capture anything missing.
 
-**Morning**: check the previous day's log. Pull open `•` actions forward to today if still due. Add any other actions that come to mind for today.
+**Morning**: check the previous day's log. Pull open `•` actions forward to today if still due. Add any other actions that come to mind for today. **Energy planning, per Carroll** (*Daily vs. Weekly vs. Monthly*): *"daily planning can be used not only to plan our day, but also our energy"* — if today's a big day with low energy, bias the per-item walk toward delegate/migrate over carry-forward.
 
 The output of reflection is **ordinary signified Rapid Log entries** — newly-captured `•` actions for today (morning carry-forward), state-marker transformations on the previous entry's `•` actions (evening mark-complete / migrate / drop), and any missed `–` notes or `=` moods captured before bed. No "reflection section" lives in the page; reflection's evidence is the state-changes on the daily log entries themselves.
 
@@ -40,7 +40,7 @@ Carroll's action dot has multiple states beyond open/closed. Replace the `•` p
 
 - `•` open action (initial state)
 - `✕` completed — *"X marks the spot"*
-- `→` migrated forward to a future daily log entry (or backward to a monthly log)
+- `→` migrated forward to a future daily/weekly/monthly log entry (or backward to a longer-cadence log)
 - `»` migrated outside the notebook (to a digital task manager, calendar, etc.)
 - `~~• action~~` no longer relevant — markdown strikethrough on the whole line, since pure-Unicode dot-with-line-through isn't a common glyph
 
@@ -48,8 +48,18 @@ Carroll's action dot has multiple states beyond open/closed. Replace the `•` p
 
 Migrating an open `•` action means transforming its dot to `→` in the original entry **and** re-writing it as a fresh `•` action in the new day's entry. The friction is intentional — re-writing forces a decision about whether the task is still worth doing.
 
-This convention covers the **capture layer** only. Cross-day linking, monthly migrations, weekly review pages, and BuJo's broader processing layer (Collections, Index, future log) aren't covered by this skill.
+## Cadence stacking (daily + weekly + monthly)
+
+Carroll explicitly frames the three short-cadence rituals (daily / weekly / monthly) as **designed to stack** — same template shape, same signifier vocabulary, same reflection-as-activity ritual structure, across all three cadences. This lets users zoom in and out without context-switching.
+
+- The **daily** entry is the *zoom-in leaf*. Today's actions should ideally advance this week's plan and this month's 4 priorities.
+- The **weekly** entry is the *midpoint anchor*. Each week's action plan (per the `weekly-log` skill) holds the next 7 days' commitments + time-blocked calendar links.
+- The **monthly** entry is the *zoom-out anchor*. Each month's action plan (per the `monthly-log` skill) holds 4 numbered priorities by importance — "the four things that would make this month a win."
+
+The daily AM coaching ritual reads the current week's action plan and the current month's 4 priorities (if those entries exist) as zoom-out context before walking yesterday's open actions. This is the Carroll-attested *"zoom in and out of our lives"* design made operational.
+
+The longer cadences live under `notes/journal/weekly/` and `notes/journal/monthly/` — see those directories' READMEs for the per-cadence specifics.
 
 ## Chapter-level intentions (separate, optional)
 
-If a longer-horizon intention shape is wanted, the Carroll-attested home for it is **chapter-level intentions on a labeled page at the start of a new notebook** — format is *Who + What + Why* prose, 1-5 intentions per chapter, on its own indexed page. Distinct from daily reflection; they don't share an artifact.
+If a longer-horizon intention shape is wanted, the Carroll-attested home for it is **chapter-level intentions on a labeled page at the start of a new notebook** — format is *Who + What + Why* prose, 1-5 intentions per chapter, on its own indexed page. Distinct from daily reflection AND from the monthly action plan; they don't share an artifact.
