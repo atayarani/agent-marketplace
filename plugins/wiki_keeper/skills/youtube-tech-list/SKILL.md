@@ -128,12 +128,14 @@ YouTube descriptions for tech-list videos vary in format. Handle the common shap
 
 For each `{name, url}` candidate that survives the category whitelist:
 
-1. Search the transcript (case-insensitive, with reasonable variant tolerance) for the project name. Auto-captioned transcripts mangle proper nouns frequently — try the exact name first, then a fuzzy match on the most distinctive token.
-2. Extract a 1–3 sentence window around the first substantive mention.
-3. Summarize the host's take to **one sentence** capturing: what the project does + the host's distinctive angle (why they recommend it, what it solves, who it's for, what's notable).
-4. Keep the blurb terse — this is triage, not synthesis. ~20-30 words is the sweet spot.
+1. Search the transcript (case-insensitive, with reasonable variant tolerance) for the project name. Auto-captioned transcripts mangle proper nouns frequently — try the exact name first, then a fuzzy match on the most distinctive token. Apply punctuation-strip before matching so a description name like *Wait But Why* still hits an ASR rendering like *"Wait, but why?"*.
+2. **Hostname-distinctive-token fallback.** If step 1 returns no hit, derive a candidate name from the URL's hostname by stripping `www.`, the TLD, and any subdirectory — e.g., `sleepopolis.com/calculators/sleep/` → `sleepopolis`; `waitbutwhy.com` → `waitbutwhy` → fuzzy-tokenized to `wait but why`. Search the transcript for that hostname token (and its space-split form). Many "Brett-In-Tech-shape" videos have a description like *Sleep Cycle Calculator: https://sleepopolis.com/...* where the host names the brand (*"on the Sleepopolis website"*) rather than the description-side product name. Hostname fallback closes that gap.
+3. **Short-name / common-word guard.** If the description-side name is ≤4 chars OR matches an English common-word list (`good`, `best`, `top`, `web`, `app`, `site`, `tool`, `new`, `free`, `home`, etc.), the case-insensitive search will hit noise across the whole transcript. Apply one of: (a) require exact-case match against the transcript-as-captioned (rare to work — ASR usually lowercases), (b) prefer the hostname-token from step 2 if it disambiguates, (c) search for the name surrounded by `the website <Name>`, `<Name> is`, `<Name>.<TLD>`, or other context anchors that disambiguate from the common word, (d) if none of the above produce a confident hit, skip the entry rather than surface a wrong-blurb. Better to drop a project than to attach a blurb extracted from the wrong sentence.
+4. Extract a 1–3 sentence window around the first substantive mention.
+5. Summarize the host's take to **one sentence** capturing: what the project does + the host's distinctive angle (why they recommend it, what it solves, who it's for, what's notable).
+6. Keep the blurb terse — this is triage, not synthesis. ~20-30 words is the sweet spot.
 
-If the project name appears in the description but **does not** appear in the transcript at all, **skip it** (do not surface). Per the skill spec: link-without-a-take has no triage value. The user is opting into "I might want to read more about this," not "here's a URL I could have found in the description anyway."
+If the project name appears in the description but **neither the name nor the hostname-token** appears in the transcript, **skip it** (do not surface). Per the skill spec: link-without-a-take has no triage value. The user is opting into "I might want to read more about this," not "here's a URL I could have found in the description anyway."
 
 If two candidates clearly refer to the same project (e.g., a GitHub URL and a homepage URL), surface only one entry — prefer the in-category URL of whichever category you're operating in.
 

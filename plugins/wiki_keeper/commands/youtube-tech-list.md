@@ -31,9 +31,11 @@ Use the `youtube-tech-list` skill's SKILL.md for full reference. Brief instructi
    - **`vscode-extension`**: marketplace.visualstudio.com/items, open-vsx.org
    - **`web`**: any non-noise project homepage (catch-all)
 
-6. **For each candidate URL** in the chosen category, find the matching project name in the description, locate its mention in the transcript, and summarize the host's take in one sentence (~20-30 words).
+6. **For each candidate URL** in the chosen category, find the matching project name in the description, locate its mention in the transcript, and summarize the host's take in one sentence (~20-30 words). **Two matching helpers**:
+   - **Hostname-distinctive-token fallback**: if the description-side name doesn't hit in the transcript (case-insensitive, punctuation-stripped, fuzzy on the most distinctive token), try the URL's hostname root (e.g., `sleepopolis.com/...` → `sleepopolis`; `waitbutwhy.com` → `wait but why`). Often the host speaks the brand/host site rather than the description-side product name (Brett-In-Tech-shape format: `Sleep Cycle Calculator: <sleepopolis URL>` — host says "Sleepopolis").
+   - **Short-name / common-word guard**: if the description name is ≤4 chars OR a common English word (`good`, `best`, `top`, `web`, `app`, `site`, `tool`, `new`, `free`, etc.), case-insensitive search will hit noise everywhere. Require a context anchor (`the website <Name>` / `<Name> is` / `<Name>.<TLD>`) OR prefer the hostname-token if it disambiguates. If neither produces a confident hit, **skip** rather than surface a wrong-blurb.
 
-7. **Skip half-matches.** If a project appears in the description but not the transcript (or vice versa), drop it — both anchors are required.
+7. **Skip half-matches.** If a project appears in the description but neither the name nor the hostname-token appears in the transcript, drop it — both anchors are required.
 
 8. **Surface to chat only.** Output shape:
 
