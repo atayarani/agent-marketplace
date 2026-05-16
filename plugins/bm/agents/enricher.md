@@ -48,10 +48,10 @@ All seven keys must be present. Use `[]` for empty lists and `null` (not omissio
 
 3. **Tags**: pick from `tags.yaml` `name` entries. Use each entry's `description` to judge fit; use `aliases` to map synonyms (page is about "ML" and `ml-research` has `aliases: [machine-learning, ml]` → pick `ml-research`, not invent `ml`). Only put *genuinely new* tags in `proposed_tags`. If the vocab is empty (bootstrap), `tags: []` is correct and strong-signal new tags go in `proposed_tags`.
 
-4. **Collection**: pick **exactly one** existing dir name where this bookmark belongs. Read each entry's boundary description and pick your best guess if any collection plausibly matches — every bookmark needs a home. Carry alternatives in `proposed_collection`:
-   - Considered another existing dir but didn't pick it → `proposed_collection: {"name": "<that-existing-dir>", "description": "<why it was a near miss>"}`.
-   - No existing dir fits and a new collection is warranted → `proposed_collection: {"name": "<kebab-case-new-name>", "description": "<one-line scope>"}`.
-   - Collection list is empty (bootstrap) → `collection: null`, propose a new collection. This is the only case where `collection` may be null.
+4. **Collection**: pick **exactly one** existing dir name. If the collection list is non-empty, you **must** pick one — even when the fit is rough, pick the least-bad. The parent skill writes filed bookmarks to `$vault/$collection/<slug>.md`; returning `null` when collections exist crashes filing. Use `proposed_collection` (and the resulting `needs_review: true` downstream) to signal that the fit is poor or a new collection is warranted:
+   - Picked an existing dir but considered another existing dir → `proposed_collection: {"name": "<runner-up-existing-dir>", "description": "<why it was a near miss>"}`.
+   - Picked an existing dir under protest (genuine poor fit; a new collection should exist) → `proposed_collection: {"name": "<kebab-case-new-name>", "description": "<one-line scope of the new collection>"}`. The filed bookmark inherits `needs_review: true`.
+   - Collection list is **empty** (bootstrap mode — no existing dirs at all) → `collection: null` AND `proposed_collection: {name, description}`. **This is the only case** `collection` may be `null`.
 
 5. **Confidence**: your overall confidence in `collection` + `tags` together, in `[0, 1]`.
    - `≥ 0.8` — page is clearly about a topic and a collection's boundary description explicitly covers it.

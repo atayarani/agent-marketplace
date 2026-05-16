@@ -88,7 +88,7 @@ done
 
 For each `inbox_file` in the queue, in order, do the steps below. Do **not** attempt to fan out Agent tool calls in parallel — process one file at a time, fully, before moving to the next.
 
-Initialize counters: `filed=0`, `needs_review_count=0`, `fetch_failed=0`, `llm_failed=0`, `bootstrap_held=0`.
+Initialize counters: `filed=0`, `needs_review_count=0`, `deferred=0`, `fetch_failed=0`, `llm_failed=0`.
 
 ### 5.a — Pre-fetch URL dedup check
 
@@ -210,11 +210,15 @@ Then extract fields from `$parsed` (also via `python3 -c` or `jq`):
 - `collection`, `title`, `blurb`, `tags`, `proposed_tags`, `proposed_collection`, `confidence`.
 - Optional: `author`, `published`.
 
-### 5.e — Bootstrap branch
+### 5.e — Defer when collection is null
 
-If `bootstrap_mode == true` AND `parsed.collection` is `null`:
+If `parsed.collection` is `null`:
 - **Do NOT** move or delete `$inbox_file` — leave it in place.
-- `bootstrap_held=$((bootstrap_held+1))`. Continue.
+- `deferred=$((deferred+1))`. Continue to next file.
+
+This branch fires in two cases:
+- **Bootstrap mode** (zero collections exist) — the expected path per enricher rule 4. User needs to create a first collection.
+- **Outside bootstrap mode** (collections exist but enricher returned null) — the enricher's rule 4 has regressed; it should have picked the least-bad existing collection and surfaced the poor fit via `proposed_collection`. The defense-in-depth here is to avoid crashing on `$vault/null/<slug>.md` — instead surface the condition through the end-of-run summary so the user can investigate the prompt.
 
 ### 5.f — Determine `needs_review`
 
@@ -324,17 +328,16 @@ Always print:
 ```
 /bm:enrich: processed N items
   filed:           M  (K needs_review)
-  bootstrap-held:  B  (inbox files left in place; no collections in vault)
+  deferred:        D  (collection=null; inbox files left in place)
   fetch-failed:    F
   llm-failed:      L
 ```
 
-Where `N = ${#queue[@]}`, `M = $filed`, `K = $needs_review_count`, `B = $bootstrap_held`, `F = $fetch_failed`, `L = $llm_failed`.
+Where `N = ${#queue[@]}`, `M = $filed`, `K = $needs_review_count`, `D = $deferred`, `F = $fetch_failed`, `L = $llm_failed`.
 
-If `B > 0` and `bootstrap_mode`: also print:
-```
-hint: create a collection with `mkdir <name> && printf "# <Name>\n\n<one-line description>\n" > <name>/README.md`, then rerun /bm:enrich.
-```
+If `D > 0`:
+- **Bootstrap mode** (zero collections exist): `hint: create a collection with mkdir <name> && printf "# <Name>\n\n<one-line description>\n" > <name>/README.md, then rerun /bm:enrich.`
+- **Otherwise** (collections exist but enricher returned null): `warning: enricher returned collection=null for D bookmark(s) despite existing collections. The prompt's rule 4 may have regressed — check bm/agents/enricher.md.`
 
 ## 7. No git commit
 
