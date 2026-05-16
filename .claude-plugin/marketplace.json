@@ -18,6 +18,10 @@
     {
       "name": "journal",
       "source": "./plugins/journal"
+    },
+    {
+      "name": "bm",
+      "source": "./plugins/bm"
     }
   ]
 }
