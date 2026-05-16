@@ -1,12 +1,12 @@
 ---
 name: enrich
-description: "Process the bookmarks `_inbox/` queue. For each file: fetch the URL via extract.py, spawn the bm:enricher subagent, parse its JSON response, and file the result into a collection. Idempotent. Use when the user types /bm:enrich, says 'process the inbox', or 'enrich the bookmarks'."
-argument-hint: "[--limit N] [--failed] [--dry-run] [--force]"
+description: "Process the bookmarks `_inbox/` queue. For each file: fetch the URL via extract.py, spawn the bm:enricher subagent, parse its JSON response, and file the result into a collection. When the enricher proposes a brand-new collection, prompts the user inline (unless `--no-prompt`). Idempotent. Use when the user types /bm:enrich, says 'process the inbox', or 'enrich the bookmarks'."
+argument-hint: "[--limit N] [--failed] [--dry-run] [--no-prompt] [--force]"
 ---
 
 Walk the bookmark vault's `_inbox/` (or `_failed/*/` with `--failed`), enrich each captured URL using the `bm:enricher` subagent, file the result into a collection directory.
 
-> **Filing model**: this skill follows the vault's current `AGENTS.md` — every bookmark goes to a best-guess collection directory; `needs_review: true` plus `proposed_*` fields are carried inline in frontmatter when confidence is low or new vocabulary is suggested. This **supersedes** the older `bm-v1-phase-1c-enrich.md` design (which routed low-confidence bookmarks to `_unsorted/` and accumulated proposals in `_proposals/YYYYMMDD-*.md`). The phase doc is stale on this point — neither `_unsorted/` nor `_proposals/` exists in the vault.
+> **Filing model**: this skill follows the vault's current `AGENTS.md` — every bookmark goes to a best-guess collection directory; `needs_review: true` plus `proposed_*` fields are carried inline in frontmatter when confidence is low or new vocabulary is suggested. When the enricher proposes a *brand-new* collection (one that doesn't yet exist), this skill prompts the user inline (`AskUserQuestion`) before filing — unless `--no-prompt` is passed. This **supersedes** the older `bm-v1-phase-1c-enrich.md` design (which routed low-confidence bookmarks to `_unsorted/` and accumulated proposals in `_proposals/YYYYMMDD-*.md`).
 
 `$ARGUMENTS` carries any flags the user passed.
 
@@ -38,7 +38,8 @@ mkdir -p "$vault/_failed/fetch" "$vault/_failed/llm"
 From `$ARGUMENTS`:
 - `--limit N` — default **10**. (Each subagent return adds ~500 tokens to host context; iterate with repeated runs to drain larger queues.)
 - `--failed` — also include `_failed/fetch/*.md` and `_failed/llm/*.md` in the queue.
-- `--dry-run` — print what would happen; no writes, no moves, no deletes.
+- `--dry-run` — print what would happen; no writes, no moves, no deletes. Implies `--no-prompt`.
+- `--no-prompt` — skip the interactive "create new collection?" prompt in step 5.f. Bookmarks with brand-new `proposed_collection` are filed to the under-protest existing collection with `needs_review: true` (pre-v0.3.0 behavior). Use for batch imports (`/bm:import`) where stopping for prompts would be tedious.
 - `--force` — accepted, no-op in v1.
 
 ## 3. Build the queue
@@ -68,7 +69,6 @@ tags_yaml=$(cat "$vault/tags.yaml" 2>/dev/null || echo "tags: []")
 ```bash
 collection_list=""
 bootstrap_mode=true
-warned_missing_readme=()
 for d in "$vault"/*/; do
   name=$(basename "$d")
   case "$name" in _*|outputs) continue;; esac
@@ -83,6 +83,8 @@ for d in "$vault"/*/; do
 done
 [ -z "$collection_list" ] && collection_list="(none — vault has no collections yet)"
 ```
+
+Note: this list is built once and **not refreshed** mid-run. If step 5.f creates a new collection, subsequent bookmarks in the same run won't see it in their enricher prompt — but step 5.f's auto-reroute path catches the case where the enricher re-proposes the just-created name.
 
 ## 5. Per-file loop (sequential)
 
@@ -206,7 +208,7 @@ On `rc != 0`:
 
 - `llm_failed=$((llm_failed+1))`. Continue.
 
-Then extract fields from `$parsed` (also via `python3 -c` or `jq`):
+Then extract fields from `$parsed` (via `python3 -c` or `jq`):
 - `collection`, `title`, `blurb`, `tags`, `proposed_tags`, `proposed_collection`, `confidence`.
 - Optional: `author`, `published`.
 
@@ -218,9 +220,50 @@ If `parsed.collection` is `null`:
 
 This branch fires in two cases:
 - **Bootstrap mode** (zero collections exist) — the expected path per enricher rule 4. User needs to create a first collection.
-- **Outside bootstrap mode** (collections exist but enricher returned null) — the enricher's rule 4 has regressed; it should have picked the least-bad existing collection and surfaced the poor fit via `proposed_collection`. The defense-in-depth here is to avoid crashing on `$vault/null/<slug>.md` — instead surface the condition through the end-of-run summary so the user can investigate the prompt.
+- **Outside bootstrap mode** (collections exist but enricher returned null) — the enricher's rule 4 has regressed; it should have picked the least-bad existing collection and surfaced the poor fit via `proposed_collection`. The defense-in-depth here is to avoid crashing on `$vault/null/<slug>.md` — surface the condition through the end-of-run summary so the user can investigate the prompt.
 
-### 5.f — Determine `needs_review`
+### 5.f — Resolve `proposed_collection` (interactive when warranted)
+
+When `parsed.proposed_collection` is non-null, decide whether to honor it before filing. **Skip this entire step if `parsed.proposed_collection` is `null`.**
+
+**Auto-reroute** — if `parsed.proposed_collection.name` matches an existing directory under `$vault/` (and is not the current `$collection`):
+- The proposed collection already exists — either an alternative existing dir the enricher considered, or a dir created earlier in this same run. Silently:
+  - Set `$collection = parsed.proposed_collection.name`.
+  - Clear `parsed.proposed_collection` (resolved — don't carry into frontmatter).
+- Continue to 5.g with the rerouted target.
+
+**Interactive prompt** — if `parsed.proposed_collection.name` is brand-new (no matching dir) AND neither `--no-prompt` nor `--dry-run` is set:
+
+Use the `AskUserQuestion` tool:
+- **header**: `"New collection?"`
+- **question**: `"Bookmark '<parsed.title>' was filed to <$collection>/, but the enricher proposed creating '<parsed.proposed_collection.name>/' (<parsed.proposed_collection.description>). How would you like to handle it?"`
+- **options** (3, plus "Other" added automatically by the tool):
+  1. label: `"Create <name>/ and file there"` — description: `"mkdir + write README.md from the proposed description; file this bookmark in the new dir."`
+  2. label: `"File to <$collection>/ with needs_review"` — description: `"keep current target; proposed_collection in frontmatter for review later."`
+  3. label: `"Leave in _inbox/"` — description: `"don't file; user resolves later."`
+
+Act on the response:
+
+- **Option 1 (create new dir)**:
+  - Validate `parsed.proposed_collection.name` matches `^[a-z0-9][a-z0-9-]*$`. If not, print warning to stderr and fall through to Option 2.
+  - `mkdir -p "$vault/$proposed_name"`.
+  - Title-case the dir name for the H1 (`gaming-guides` → `Gaming Guides`):
+    ```bash
+    h1=$(echo "$proposed_name" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)} 1')
+    printf "# %s\n\n%s\n" "$h1" "$proposed_description" > "$vault/$proposed_name/README.md"
+    ```
+  - Set `$collection = $proposed_name`.
+  - Clear `parsed.proposed_collection` (resolved).
+
+- **Option 2 (file with needs_review)**: no change. `$collection` and `parsed.proposed_collection` stay as-is. Continue.
+
+- **Option 3 (leave in inbox)**: `deferred=$((deferred+1))`. Do NOT move/delete `$inbox_file`. **Continue to next file** (skip remaining steps for this bookmark).
+
+- **"Other" / unrecognized free-text**: treat as Option 3 (defer). Echo the user's text to stderr so they can act on it.
+
+**Skip prompt** — if `--no-prompt` OR `--dry-run` is set AND name is brand-new: don't prompt. Keep current `$collection`. `proposed_collection` carried in frontmatter via the needs_review block. Continue to 5.g.
+
+### 5.g — Determine `needs_review`
 
 ```
 needs_review = (parsed.confidence < 0.4)
@@ -228,7 +271,9 @@ needs_review = (parsed.confidence < 0.4)
             OR (parsed.proposed_collection is not null)
 ```
 
-### 5.g — Compute the slug
+Note: `parsed.proposed_collection` may have been cleared by step 5.f (Option 1 or auto-reroute), in which case it no longer contributes to `needs_review`.
+
+### 5.h — Compute the slug
 
 ```python
 import re
@@ -241,9 +286,9 @@ Collision handling:
 1. If `$vault/$collection/$slug.md` exists → try `$slug-$(printf '%s' "$url" | shasum | head -c 6).md`.
 2. If THAT also exists → append `-$(date +%s)`.
 
-Ensure `$vault/$collection/` exists (it should, since the enricher only proposes existing collection names — `mkdir -p` defensively anyway).
+Ensure `$vault/$collection/` exists (step 5.f either kept the enricher's pick, rerouted to an existing dir, or created one — `mkdir -p` defensively anyway).
 
-### 5.h — `--dry-run` short-circuit
+### 5.i — `--dry-run` short-circuit
 
 If `dry_run == true`:
 - Print: `would write: <target>  (collection=$collection, confidence=$confidence, needs_review=$needs_review)`.
@@ -251,7 +296,7 @@ If `dry_run == true`:
 - Increment `filed` (and `needs_review_count` if applicable) so the summary reflects what would have happened.
 - Continue.
 
-### 5.i — Write the filed bookmark
+### 5.j — Write the filed bookmark
 
 Write the target file with frontmatter in this exact order. Body is **empty** (user notes area; agents never write here).
 
@@ -313,11 +358,11 @@ EOF
 
 `filed=$((filed+1))`. If `$needs_review`: `needs_review_count=$((needs_review_count+1))`.
 
-### 5.j — Delete the inbox source
+### 5.k — Delete the inbox source
 
 `rm "$inbox_file"`.
 
-(In `--dry-run` this step is skipped — already handled in 5.h.)
+(In `--dry-run` this step is skipped — already handled in 5.i.)
 
 ---
 
@@ -328,7 +373,7 @@ Always print:
 ```
 /bm:enrich: processed N items
   filed:           M  (K needs_review)
-  deferred:        D  (collection=null; inbox files left in place)
+  deferred:        D  (collection=null or user chose 'leave in inbox'; inbox files left in place)
   fetch-failed:    F
   llm-failed:      L
 ```
@@ -337,7 +382,7 @@ Where `N = ${#queue[@]}`, `M = $filed`, `K = $needs_review_count`, `D = $deferre
 
 If `D > 0`:
 - **Bootstrap mode** (zero collections exist): `hint: create a collection with mkdir <name> && printf "# <Name>\n\n<one-line description>\n" > <name>/README.md, then rerun /bm:enrich.`
-- **Otherwise** (collections exist but enricher returned null): `warning: enricher returned collection=null for D bookmark(s) despite existing collections. The prompt's rule 4 may have regressed — check bm/agents/enricher.md.`
+- **Otherwise** (deferred via step 5.e null-collection branch with collections present, or via step 5.f "leave in inbox"): one-line note describing the deferred count and that the inbox files are awaiting user action.
 
 ## 7. No git commit
 
@@ -350,6 +395,7 @@ The user commits manually at milestones.
 - **Empty inbox** → silent no-op (exit 0).
 - **Half-filed bookmark** (Ctrl-C between write and inbox-delete) → step 5.a's URL dedup catches it on the next run; the orphaned inbox source is removed.
 - **`--failed` retry** on a file already moved to `_failed/*/` → the file re-enters the pipeline. Failure-log sections accumulate (append, not overwrite) so retry history is preserved.
+- **User chose 'leave in inbox' in step 5.f** → bookmark stays as a regular inbox file. Re-running `/bm:enrich` re-prompts (unless the proposed collection now exists, in which case auto-reroute fires).
 
 ## Conventions
 
@@ -359,3 +405,4 @@ The user commits manually at milestones.
 - Filed bookmarks have **frontmatter only**, no body — the body is the user's notes area; agents never write there.
 - The subagent runs in **clean context** — it only sees what step 5.c passes. It cannot read the vault, prior conversation, or other inbox files. Always include the full `tags.yaml` and collection list, even though they're cheap repetitions.
 - Haiku occasionally wraps JSON in code fences — step 5.d's parser tolerates this. Do not modify the enricher's system prompt to try to suppress the fences; the defensive parse is the real fix.
+- Step 5.f's interactive prompt fires only for *brand-new* `proposed_collection` names. If the enricher proposes an *existing* dir as an alternative (rather than the current pick), step 5.f auto-reroutes silently.
