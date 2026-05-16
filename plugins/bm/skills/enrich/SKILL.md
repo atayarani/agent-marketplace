@@ -275,9 +275,15 @@ Note: `parsed.proposed_collection` may have been cleared by step 5.f (Option 1 o
 
 ### 5.h — Compute the slug
 
+ASCII-fold the title before the regex so titles with accents, umlauts, ligatures, etc. produce readable slugs rather than collapsing to noise (e.g. `Bánh mì` → `banh-mi`, not `b-nh-m`):
+
 ```python
-import re
-slug = re.sub(r"[^a-z0-9]+", "-", parsed["title"].lower()).strip("-")[:80]
+import re, unicodedata, hashlib
+ascii_title = unicodedata.normalize('NFD', parsed["title"]).encode('ascii', 'ignore').decode('ascii')
+slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")[:80]
+if not slug:
+    # Title has no ASCII-foldable chars (e.g. CJK-only title) — fall back to URL hash
+    slug = hashlib.sha1(url.encode()).hexdigest()[:12]
 ```
 
 Target path: `$vault/$collection/$slug.md`.

@@ -1,5 +1,5 @@
 {
   "name": "bm",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Raindrop-style bookmark manager: capture, enrich, and file URLs into a plain-text vault."
 }
