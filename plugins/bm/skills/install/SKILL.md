@@ -62,6 +62,35 @@ log_dir="$HOME/.claude/logs"
 mkdir -p "$log_dir" "$(dirname "$plist_path")"
 ```
 
+### 3.a. Pick a Python interpreter
+
+The bundled `/usr/bin/python3` is an Apple **platform binary** — macOS TCC silently denies it any access to `~/Documents/` / `~/Desktop/` / etc. from launchd-spawned contexts, with no permission prompt available. The daemon needs to read its vault under `~/Documents/obsidian/whiskers/`, so it must run under a third-party Python whose TCC permission *can* be granted (and prompted for) via System Settings.
+
+Prefer (first match wins):
+
+1. `/opt/homebrew/bin/python3` (Apple Silicon Homebrew)
+2. `/usr/local/bin/python3` (Intel Homebrew)
+3. `$(pyenv which python3 2>/dev/null)` (pyenv shim resolves to a real binary)
+4. **Fallback** `/usr/bin/python3` with a loud warning that the user must grant Full Disk Access to it in System Settings → Privacy & Security, since TCC won't prompt.
+
+```bash
+python_bin=""
+for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+  [ -x "$cand" ] && { python_bin="$cand"; break; }
+done
+if [ -z "$python_bin" ] && command -v pyenv >/dev/null 2>&1; then
+  resolved=$(pyenv which python3 2>/dev/null)
+  [ -x "$resolved" ] && python_bin="$resolved"
+fi
+if [ -z "$python_bin" ]; then
+  python_bin="/usr/bin/python3"
+  platform_python="true"
+else
+  platform_python="false"
+fi
+echo "python: $python_bin"
+```
+
 ## 4. Parse arguments
 
 Tokens in `$ARGUMENTS`:
@@ -120,6 +149,7 @@ Both modes regenerate the plist from the template (idempotent — captures any p
 tmp_plist=$(mktemp)
 sed \
   -e "s|{{LABEL}}|$label|g" \
+  -e "s|{{PYTHON}}|$python_bin|g" \
   -e "s|{{SERVER_PATH}}|$server_py|g" \
   -e "s|{{LOG_DIR}}|$log_dir|g" \
   -e "s|{{VAULT_PATH}}|$vault|g" \
@@ -167,6 +197,21 @@ for _ in 1 2 3; do
 done
 if [ -z "$ok" ]; then
   echo "warning: daemon failed health check after 3s — check $log_dir/bm-server.err.log" >&2
+  # Common cause: TCC denied Documents access. Detect by sampling the err log.
+  if [ -f "$log_dir/bm-server.err.log" ] && tail -5 "$log_dir/bm-server.err.log" 2>/dev/null | grep -q "no bookmarks vault found"; then
+    echo
+    echo "Likely TCC permission issue. The daemon ran but could not read the vault."
+    if [ "$platform_python" = "true" ]; then
+      echo "Open: System Settings → Privacy & Security → Full Disk Access → enable /usr/bin/python3"
+      echo "      (You may need to click +, then press Cmd+Shift+. to show hidden /usr paths.)"
+    else
+      echo "Open: System Settings → Privacy & Security → Files and Folders →"
+      echo "      under '$python_bin', enable 'Documents Folder' access."
+      echo "      (If the entry isn't listed yet, click the bookmarklet once first —"
+      echo "      that triggers the TCC prompt.)"
+    fi
+    echo "Then re-run: /bm:install --reload"
+  fi
 else
   echo "Health: $ok"
 fi
