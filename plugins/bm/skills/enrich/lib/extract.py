@@ -98,10 +98,20 @@ def read_frontmatter(path: Path) -> dict[str, Any]:
     }
 
 
-def fetch(url: str) -> httpx.Response:
+def fetch(url: str) -> tuple[httpx.Response | None, str | None, int]:
     """Fetch with one retry on transient (ConnectError / ReadTimeout / 5xx).
-    Non-2xx after retry → die. Returns Response on success."""
+
+    Returns (response, error_msg, status_code):
+      - On success: (Response, None, status)
+      - On hard failure (transient exhausted, or HTTP 4xx/5xx after retry):
+        (None, error_msg, status_code_or_0)
+
+    Caller decides whether to die or degrade gracefully (e.g., bookmarklet
+    captures with an inbox_title can still proceed to the enricher).
+    """
     headers = {"User-Agent": USER_AGENT}
+    last_err = "unknown"
+    last_status = 0
     with httpx.Client(
         timeout=TIMEOUT, follow_redirects=True, headers=headers
     ) as client:
@@ -109,17 +119,19 @@ def fetch(url: str) -> httpx.Response:
             try:
                 resp = client.get(url)
             except TRANSIENT_EXC as e:
+                last_err = f"{type(e).__name__}: {e}"
                 if attempt == 0:
                     time.sleep(RETRY_DELAY)
                     continue
-                die(f"fetch failed for {url}: {type(e).__name__}: {e}")
+                return (None, f"fetch failed for {url}: {last_err}", 0)
             if 500 <= resp.status_code < 600 and attempt == 0:
                 time.sleep(RETRY_DELAY)
                 continue
+            last_status = resp.status_code
             if resp.status_code >= 400:
-                die(f"HTTP {resp.status_code} for {url}")
-            return resp
-    die(f"fetch failed for {url}: exhausted retries")  # unreachable
+                return (None, f"HTTP {resp.status_code} for {url}", resp.status_code)
+            return (resp, None, resp.status_code)
+    return (None, f"fetch failed for {url}: exhausted retries", last_status)
 
 
 def get_html_text(resp: httpx.Response) -> str:
@@ -184,7 +196,29 @@ def main() -> int:
     path = Path(sys.argv[1])
     fm = read_frontmatter(path)
     url = fm["url"]
-    resp = fetch(url)
+    resp, err, status = fetch(url)
+    if resp is None:
+        # Graceful degradation: when the inbox file already has a title from
+        # the bookmarklet capture, emit a soft-fail record (exit 0) so the
+        # enricher can still classify from url + inbox_title alone. Without
+        # an inbox_title there's nothing to work with — hard fail.
+        if fm["inbox_title"]:
+            print(f"extract.py: {err} — degrading to inbox-title fallback", file=sys.stderr)
+            out = {
+                "url": url,
+                "fetch_status": status,
+                "title": None,
+                "meta_description": None,
+                "og": {},
+                "json_ld": None,
+                "body_text_excerpt": "",
+                "web_search_override": fm["web_search_override"],
+                "inbox_title": fm["inbox_title"],
+            }
+            json.dump(out, sys.stdout, ensure_ascii=False)
+            sys.stdout.write("\n")
+            return 0
+        die(err or f"fetch failed for {url}")
     soup = BeautifulSoup(get_html_text(resp), "html.parser")
     out = {
         "url": url,

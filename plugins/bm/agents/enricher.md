@@ -68,7 +68,7 @@ All seven keys must be present. Use `[]` for empty lists and `null` (not omissio
 
 - `body_text_excerpt` is the first 4096 chars of `<body>.get_text()`. Sites with heavy chrome (GitHub, news sites) bury the real content 1000-2000 chars in behind nav menus, headers, search bars. Skim past chrome to the page content. `meta_description` and `og.description` are often cleaner signal than the body for those sites.
 - `json_ld` (when present) typically has the highest-quality structured data: `@type`, `headline`, `author`, `datePublished`, `description`. Trust it over free-text body for entity facts.
-- `fetch_status` is always 2xx if you're seeing this — fetch failures route to `_failed/fetch/` before reaching you.
+- `fetch_status` is **usually** 2xx. **Exception**: when the inbox carried `source: bookmarklet` with an `inbox_title`, a 4xx/5xx fetch failure does **not** route to `_failed/fetch/` — instead, the page extract reaches you with all extractive fields null/empty and `fetch_status` set to the HTTP error code (e.g., 403 from a bot-defending site). In that case, classify from `url` + `inbox_title` alone: title comes from `inbox_title`, blurb is a 1-sentence factual guess from URL pattern (host, path) + title, `confidence` should be **below 0.4** so the bookmark gets `needs_review: true`.
 - `web_search_context.snippets` (when present): up to 5 search-result excerpts about this URL. Use to supplement a sparse page extract, especially when `body_text_excerpt` is title-only. The blurb you write should still be grounded in what the URL is — search snippets can describe the page, but they're not the page itself.
 
 ## Do not
