@@ -15,24 +15,27 @@
   const u = location.href;
   const t = document.title || "";
 
-  // Toast UI: floating div, bottom-right, auto-dismiss after 1.6s.
+  // Toast UI: floating div, bottom-right. Success auto-dismisses fast (1.6s).
+  // Failure stays longer (4s) so the user has time to read it.
   const toast = (msg, ok) => {
     try {
       const d = document.createElement("div");
       d.textContent = "bm: " + msg;
       d.style.cssText =
         "position:fixed;z-index:2147483647;right:16px;bottom:16px;" +
-        "padding:8px 12px;border-radius:6px;font:13px/1.3 system-ui;" +
+        "padding:10px 14px;border-radius:6px;font:14px/1.3 system-ui;" +
         "color:#fff;background:" + (ok ? "#10b981" : "#ef4444") + ";" +
-        "box-shadow:0 4px 12px rgba(0,0,0,.18);pointer-events:none";
+        "box-shadow:0 4px 12px rgba(0,0,0,.18);pointer-events:none;" +
+        "max-width:320px";
       document.body.appendChild(d);
-      setTimeout(() => d.remove(), 1600);
+      setTimeout(() => d.remove(), ok ? 1600 : 4000);
     } catch (e) { /* document.body may be unavailable on some pages */ }
   };
 
-  // Primary: fetch POST. mode:'no-cors' permits cross-origin requests to
-  // localhost without preflight, at the cost of an opaque response (we
-  // can't read status, so we display "Saved" optimistically).
+  // fetch POST. mode:'no-cors' permits cross-origin requests to localhost
+  // without preflight, at the cost of an opaque response — we display
+  // "Saved" optimistically on resolve. Rejection covers both daemon-down
+  // (connection refused) and strict-CSP-blocking-fetch cases.
   fetch("http://localhost:9876/add", {
     method: "POST",
     mode: "no-cors",
@@ -40,20 +43,6 @@
     body: JSON.stringify({ url: u, title: t }),
   }).then(
     () => toast("Saved", true),
-    () => {
-      // Primary path failed — could be daemon down OR strict CSP blocking
-      // fetch. ALWAYS show a toast so the user gets clear feedback. Then
-      // try the popup-GET fallback (helps in the CSP case; harmless if
-      // daemon is down — popup just shows connection-refused briefly).
-      toast("Failed — opening fallback popup", false);
-      const q =
-        "url=" + encodeURIComponent(u) +
-        "&title=" + encodeURIComponent(t);
-      window.open(
-        "http://localhost:9876/add?" + q,
-        "_blank",
-        "width=320,height=160"
-      );
-    }
+    () => toast("Failed — daemon down or CSP-blocked. /bm:install --status", false)
   );
 })();
