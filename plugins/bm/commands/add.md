@@ -7,7 +7,7 @@ Capture a URL into the bookmark vault's `_inbox/` queue. Single-shot, idempotent
 
 Use the `add` skill's `SKILL.md` for the full runbook. Brief steps:
 
-1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallback: `~/Documents/whiskers/`. Error + exit 1 if neither.
+1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallbacks (first match wins): `$BM_VAULT`, `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/`. Error + exit 1 if none match.
 2. **Resolve the URL** — `$ARGUMENTS` if given; else `pbpaste`. Trim whitespace.
 3. **Validate** — must match `^https?://[^[:space:]]+$`. Else error + exit 1.
 4. **Dedup** — `rg -Fx -l "url: $url" $vault --type md`. Hit → echo `already saved: <path>` + exit 0.

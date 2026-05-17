@@ -13,7 +13,7 @@ Run as one bash block. `$ARGUMENTS` is the user's slash-command argument (empty 
 ```bash
 set -e
 
-# 1. Locate the vault (walk up from PWD; fallback to ~/Documents/bookmarks)
+# 1. Locate the vault (walk up from PWD; fallback: $BM_VAULT, then ~/Documents/obsidian/whiskers, ~/Documents/whiskers, ~/whiskers — first match wins)
 vault=""
 d="$PWD"
 while [ "$d" != "/" ]; do
@@ -22,10 +22,14 @@ while [ "$d" != "/" ]; do
   fi
   d=$(dirname "$d")
 done
-if [ -z "$vault" ] && [ -f "$HOME/Documents/whiskers/AGENTS.md" ] \
-   && head -1 "$HOME/Documents/whiskers/AGENTS.md" | grep -q "Bookmarks Vault"; then
-  vault="$HOME/Documents/whiskers"
-fi
+# Fallback: $BM_VAULT env var, then known default locations (first match wins).
+for candidate in "$BM_VAULT" "$HOME/Documents/obsidian/whiskers" "$HOME/Documents/whiskers" "$HOME/whiskers"; do
+  [ -n "$vault" ] && break
+  [ -z "$candidate" ] && continue
+  if [ -f "$candidate/AGENTS.md" ] && head -1 "$candidate/AGENTS.md" | grep -q "Bookmarks Vault"; then
+    vault="$candidate"
+  fi
+done
 [ -z "$vault" ] && { echo "error: bookmarks vault not found" >&2; exit 1; }
 
 # 2. Resolve URL: $ARGUMENTS if non-empty, else pbpaste

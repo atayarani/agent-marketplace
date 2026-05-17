@@ -11,7 +11,7 @@ Review the enrichment backlog. Two modes:
 
 Use the `review` skill's `SKILL.md` for the full runbook. Brief steps for `--vocab`:
 
-1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallback: `~/Documents/whiskers/`.
+1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallbacks (first match wins): `$BM_VAULT`, `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/`.
 2. **Run `lib/vocab_warmup.py`** — scans frontmatter, frequency-ranks `imported_tags` (case-folded to kebab-case, original casings recorded as variants) and `imported_collection` (emoji-stripped → `dir_slug`), filters out values already in `tags.yaml` or existing dirs, emits a JSON decision list to stdout.
 3. **Tags phase** — chunked `AskUserQuestion` prompts (5 candidates each, options: Accept all / Reject all / Pick individually / Skip remaining tags).
 4. **Collections phase** — same shape over `collection_candidates`.

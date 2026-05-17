@@ -12,7 +12,7 @@ Search the bm vault. No LLM, no subagent — a single python pass over filed-boo
 
 ## 1. Locate the vault
 
-Walk up from `$PWD` for a directory whose `AGENTS.md` first line contains "Bookmarks Vault". Fall back to `$HOME/Documents/whiskers/` if its `AGENTS.md` matches.
+Walk up from `$PWD` for a directory whose `AGENTS.md` first line contains "Bookmarks Vault". If walk-up fails, try `$BM_VAULT`, then `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/` — first match wins. Override via `BM_VAULT=/path/to/vault /bm:...`.
 
 ```bash
 vault=""
@@ -23,10 +23,14 @@ while [ "$d" != "/" ]; do
   fi
   d=$(dirname "$d")
 done
-if [ -z "$vault" ] && [ -f "$HOME/Documents/whiskers/AGENTS.md" ] \
-   && head -1 "$HOME/Documents/whiskers/AGENTS.md" | grep -q "Bookmarks Vault"; then
-  vault="$HOME/Documents/whiskers"
-fi
+# Fallback: $BM_VAULT env var, then known default locations (first match wins).
+for candidate in "$BM_VAULT" "$HOME/Documents/obsidian/whiskers" "$HOME/Documents/whiskers" "$HOME/whiskers"; do
+  [ -n "$vault" ] && break
+  [ -z "$candidate" ] && continue
+  if [ -f "$candidate/AGENTS.md" ] && head -1 "$candidate/AGENTS.md" | grep -q "Bookmarks Vault"; then
+    vault="$candidate"
+  fi
+done
 [ -z "$vault" ] && { echo "error: bookmarks vault not found" >&2; exit 1; }
 ```
 
@@ -209,6 +213,6 @@ Run from `/Users/ali/Documents/obsidian/whiskers/`:
 - `/bm:list --hide-pending` — excludes `needs_review: true`.
 - `/bm:list --tag bogus-tag-doesnt-exist` — prints `no bookmarks match the given filters` and exits 0.
 - `/bm:list --limit 5` — caps at 5 rows.
-- `/bm:list` from outside the vault — `$HOME/Documents/whiskers/` fallback resolves.
+- `/bm:list` from outside the vault — `$BM_VAULT` env var or one of the default-location fallbacks resolves.
 - Files in `_inbox/`, `_failed/`, `_trash/`, `_broken/`, `_proposals/`, `outputs/` never appear.
 - Vault-root files (AGENTS.md, tags.yaml, phase docs) never appear.

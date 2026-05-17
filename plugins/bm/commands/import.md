@@ -7,7 +7,7 @@ Parse a Raindrop HTML export (Netscape Bookmark File Format) and populate the bm
 
 Use the `import` skill's `SKILL.md` for the full runbook. Brief steps:
 
-1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` titled "Bookmarks Vault". Fallback: `~/Documents/whiskers/`.
+1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` titled "Bookmarks Vault". Fallbacks (first match wins): `$BM_VAULT`, `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/`.
 2. **Validate the export path** — file exists, `.html` or `.htm` extension.
 3. **Run the parser** — `raindrop_import.py <export-path> --vault $vault`.
 4. **Surface the summary** — `imported: N, skipped: M (deduplicated)`. Suggest `/bm:enrich --limit 20 --no-prompt` to start enrichment of the first batch.

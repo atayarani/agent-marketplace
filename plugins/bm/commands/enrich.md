@@ -7,7 +7,7 @@ Process the bookmark vault's `_inbox/` queue. For each file: fetch the URL with 
 
 Use the `enrich` skill's `SKILL.md` for the full runbook. Brief steps:
 
-1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallback: `~/Documents/whiskers/`.
+1. **Locate the vault** — walk up from `$PWD` for an `AGENTS.md` whose first line contains "Bookmarks Vault". Fallbacks (first match wins): `$BM_VAULT`, `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/`.
 2. **Build queue** — `_inbox/*.md` by default; with `--failed`, also include `_failed/fetch/*.md` and `_failed/llm/*.md`. Apply `--limit N` (default 10).
 3. **For each file** — run `extract.py`, spawn `bm:enricher`, parse JSON (tolerating ```` ```json ```` fences), resolve any brand-new `proposed_collection` (auto-reroute if it exists; ask user otherwise), file the bookmark.
 4. **Summary** — tally `filed / needs_review / deferred / fetch-failed / llm-failed`.

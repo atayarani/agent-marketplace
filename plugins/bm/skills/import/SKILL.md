@@ -14,7 +14,7 @@ Parse a Raindrop HTML export (Netscape Bookmark File Format) and populate the bm
 
 ## 1. Locate the vault
 
-Walk up from `$PWD` for a directory whose `AGENTS.md` first line contains "Bookmarks Vault". Fall back to `$HOME/Documents/whiskers/` if its `AGENTS.md` matches.
+Walk up from `$PWD` for a directory whose `AGENTS.md` first line contains "Bookmarks Vault". If walk-up fails, try `$BM_VAULT`, then `~/Documents/obsidian/whiskers/`, `~/Documents/whiskers/`, `~/whiskers/` — first match wins. Override via `BM_VAULT=/path/to/vault /bm:...`.
 
 ```bash
 vault=""
@@ -25,10 +25,14 @@ while [ "$d" != "/" ]; do
   fi
   d=$(dirname "$d")
 done
-if [ -z "$vault" ] && [ -f "$HOME/Documents/whiskers/AGENTS.md" ] \
-   && head -1 "$HOME/Documents/whiskers/AGENTS.md" | grep -q "Bookmarks Vault"; then
-  vault="$HOME/Documents/whiskers"
-fi
+# Fallback: $BM_VAULT env var, then known default locations (first match wins).
+for candidate in "$BM_VAULT" "$HOME/Documents/obsidian/whiskers" "$HOME/Documents/whiskers" "$HOME/whiskers"; do
+  [ -n "$vault" ] && break
+  [ -z "$candidate" ] && continue
+  if [ -f "$candidate/AGENTS.md" ] && head -1 "$candidate/AGENTS.md" | grep -q "Bookmarks Vault"; then
+    vault="$candidate"
+  fi
+done
 [ -z "$vault" ] && { echo "error: bookmarks vault not found" >&2; exit 1; }
 ```
 
