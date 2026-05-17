@@ -1,7 +1,7 @@
 ---
 name: review
-description: "Review the enrichment backlog. --vocab mode: batch-promote frequent imported_tags / imported_collection values from the inbox to tags.yaml + collection dirs (pre-enrich warmup). Default mode: per-bookmark walker for needs_review:true files (post-enrich cleanup). Idempotent; no git commits. Use when the user wants to resolve proposals after /bm:import or /bm:enrich."
-argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch]"
+description: "Review the enrichment backlog. --vocab mode: batch-promote frequent imported_tags / imported_collection values from the inbox to tags.yaml + collection dirs (pre-enrich warmup). Default mode: per-bookmark walker for needs_review:true files (post-enrich cleanup). Idempotent. Use when the user wants to resolve proposals after /bm:import or /bm:enrich."
+argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch] [--commit]"
 ---
 
 Two modes:
@@ -53,6 +53,9 @@ From `$ARGUMENTS`:
 - `--collection X` — string (default empty). Restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are not touched.
 - `--limit N` — integer (default unlimited). Stop after walking N bookmarks. Useful for piloting before committing to a long session.
 - `--refetch` — boolean flag (default false). Re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
+
+**Both modes**
+- `--commit` — boolean flag (default false). After the run completes, auto-commit the touched paths (`tags.yaml` + created/moved collection dirs) with a mode-specific templated message (see section 9). Refuses to commit if the vault has pre-existing staged changes. Push is left to the user.
 
 ## 3. Default mode — per-bookmark walker
 
@@ -122,6 +125,14 @@ echo "/bm:review: walking $queue_count bookmark(s) with needs_review:true"
 ```
 
 Initialize counters in working memory: `resolved=0`, `partially=0`, `skipped=0`.
+
+Also initialize a `touched_paths=()` array (used by section 9's optional auto-commit). As the loop runs, append paths whenever the skill mutates the vault:
+- After a `tags.yaml` append (Option 1 or Option 2 tag promotion) → append `tags.yaml`.
+- After a `mkdir + README.md` (Option 1 creating `proposed_collection`, or Option 4 / Variant-B-Option-2 creating a new "Other" dir) → append the new `<slug>/` (covers both the `README.md` and the about-to-move bookmark).
+- After a `mv "$bookmark_file" "$target"` → append both the from-dir and the to-dir (relative to `$vault`).
+- After the in-place frontmatter mutation in 3.f (no `mv`) → append the parent dir of `$bookmark_file` (relative to `$vault`).
+
+Dedup the list at the end; section 9 uses it as a set of `git add` paths.
 
 ### 3.d — Per-bookmark loop
 
@@ -610,9 +621,70 @@ If `T > 0`, suggest:
 Next: run /bm:enrich --limit 20 --no-prompt to test the warmup impact (target: needs_review:true rate < 30%).
 ```
 
-## 9. No git commit
+## 9. Optional auto-commit
 
-The user commits manually at milestones (per vault's `AGENTS.md` contract).
+If `--commit` is **not** set, exit here — the user commits manually at milestones (per vault's `AGENTS.md` contract).
+
+If `--commit` **is** set, run the mode-appropriate block.
+
+### 9.a — Vocab mode
+
+Touched paths are derivable directly from the apply step:
+- `tags.yaml` — if `len(accepted_tags) > 0`.
+- `<slug>/` for each entry in `accepted_collections` — covers the `README.md` written in 7.b.
+
+```bash
+if [ "$commit_flag" = "true" ]; then
+  pre_staged=$(git -C "$vault" diff --cached --name-only)
+  if [ -n "$pre_staged" ]; then
+    echo "warning: vault has pre-existing staged changes; skipping auto-commit" >&2
+    echo "staged before this run:" >&2
+    printf '  %s\n' "$pre_staged" >&2
+  else
+    [ "$T" -gt 0 ] && git -C "$vault" add tags.yaml
+    for slug in "${accepted_collection_slugs[@]}"; do
+      git -C "$vault" add "$slug"
+    done
+    if [ -z "$(git -C "$vault" diff --cached --name-only)" ]; then
+      :  # nothing to commit (everything skipped or already in tree)
+    else
+      msg="bm:review --vocab: promoted $T tags, created $C collections"
+      git -C "$vault" commit -m "$msg"
+    fi
+  fi
+fi
+```
+
+Where `$T` and `$C` are the same values used in section 8's summary line, and `accepted_collection_slugs` is the list of `dir_slug` values from `accepted_collections`.
+
+### 9.b — Walker mode
+
+Touched paths are accumulated during the per-bookmark loop into `touched_paths` (see section 3.d).
+
+```bash
+if [ "$commit_flag" = "true" ]; then
+  pre_staged=$(git -C "$vault" diff --cached --name-only)
+  if [ -n "$pre_staged" ]; then
+    echo "warning: vault has pre-existing staged changes; skipping auto-commit" >&2
+    echo "staged before this run:" >&2
+    printf '  %s\n' "$pre_staged" >&2
+  else
+    uniq_paths=$(printf '%s\n' "${touched_paths[@]}" | sort -u)
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      git -C "$vault" add "$p" 2>/dev/null || git -C "$vault" add --update "$p" 2>/dev/null || true
+    done <<<"$uniq_paths"
+    if [ -z "$(git -C "$vault" diff --cached --name-only)" ]; then
+      :  # nothing to commit (e.g. only --refetch-set-blurb that left the file byte-identical)
+    else
+      msg="bm:review: resolved $resolved bookmarks ($partially partial, $skipped skipped)"
+      git -C "$vault" commit -m "$msg"
+    fi
+  fi
+fi
+```
+
+Both blocks: the commit does NOT push and does NOT pass `--no-verify`; any pre-commit hooks run as normal.
 
 ---
 

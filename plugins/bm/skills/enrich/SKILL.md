@@ -1,7 +1,7 @@
 ---
 name: enrich
 description: "Process the bookmarks `_inbox/` queue. For each file: fetch the URL via extract.py, spawn the bm:enricher subagent, parse its JSON response, and file the result into a collection. When the enricher proposes a brand-new collection, prompts the user inline (unless `--no-prompt`). Idempotent. Use when the user types /bm:enrich, says 'process the inbox', or 'enrich the bookmarks'."
-argument-hint: "[--limit N] [--failed] [--dry-run] [--no-prompt] [--force]"
+argument-hint: "[--limit N] [--failed] [--dry-run] [--no-prompt] [--force] [--commit]"
 ---
 
 Walk the bookmark vault's `_inbox/` (or `_failed/*/` with `--failed`), enrich each captured URL using the `bm:enricher` subagent, file the result into a collection directory.
@@ -45,6 +45,7 @@ From `$ARGUMENTS`:
 - `--dry-run` — print what would happen; no writes, no moves, no deletes. Implies `--no-prompt`.
 - `--no-prompt` — skip the interactive "create new collection?" prompt in step 5.f. Bookmarks with brand-new `proposed_collection` are filed to the under-protest existing collection with `needs_review: true` (pre-v0.3.0 behavior). Use for batch imports (`/bm:import`) where stopping for prompts would be tedious.
 - `--force` — accepted, no-op in v1.
+- `--commit` — boolean flag (default false). After a clean run, auto-commit the touched files with a templated message (see section 7). Refuses to commit if the vault has pre-existing staged changes. Push is left to the user.
 
 ## 3. Build the queue
 
@@ -95,6 +96,15 @@ Note: this list is built once and **not refreshed** mid-run. If step 5.f creates
 For each `inbox_file` in the queue, in order, do the steps below. Do **not** attempt to fan out Agent tool calls in parallel — process one file at a time, fully, before moving to the next.
 
 Initialize counters: `filed=0`, `needs_review_count=0`, `deferred=0`, `fetch_failed=0`, `llm_failed=0`.
+
+Also initialize a path-tracking set (used by step 7's optional auto-commit): `touched_dirs=()`. As the loop runs, whenever the skill writes, moves, or deletes a file inside `$vault`, append the file's *parent directory* (relative to `$vault`) to `touched_dirs`. Specifically:
+- After a successful `mv "$inbox_file" "$vault/_failed/fetch/..."` in 5.b → append `_failed/fetch`.
+- After a successful `mv "$inbox_file" "$vault/_failed/llm/..."` in 5.d → append `_failed/llm`.
+- After 5.f Option 1 creates a new collection dir → append the new `<slug>` (covers the `README.md` + the filed bookmark).
+- After 5.j writes the filed bookmark → append `<collection>` (the dir the bookmark was filed into).
+- After 5.k removes `$inbox_file` → append `_inbox` (covers the delete).
+
+Dedup the list at the end (it's used only as a set of `git add` paths in step 7).
 
 ### 5.a — Pre-fetch URL dedup check
 
@@ -475,9 +485,52 @@ If `D > 0`:
 - **Bootstrap mode** (zero collections exist): `hint: create a collection with mkdir <name> && printf "# <Name>\n\n<one-line description>\n" > <name>/README.md, then rerun /bm:enrich.`
 - **Otherwise** (deferred via step 5.e null-collection branch with collections present, or via step 5.f "leave in inbox"): one-line note describing the deferred count and that the inbox files are awaiting user action.
 
-## 7. No git commit
+## 7. Optional auto-commit
 
-The user commits manually at milestones.
+If `--commit` is **not** set, exit here — the user commits manually at milestones.
+
+If `--commit` **is** set:
+
+```bash
+if [ "$commit_flag" = "true" ]; then
+  pre_staged=$(git -C "$vault" diff --cached --name-only)
+  if [ -n "$pre_staged" ]; then
+    echo "warning: vault has pre-existing staged changes; skipping auto-commit" >&2
+    echo "staged before this run:" >&2
+    printf '  %s\n' "$pre_staged" >&2
+  else
+    # Dedup touched_dirs into a sorted unique list
+    uniq_dirs=$(printf '%s\n' "${touched_dirs[@]}" | sort -u)
+    # Stage only the dirs the skill itself touched (never `git add .`)
+    while IFS= read -r d; do
+      [ -z "$d" ] && continue
+      [ -d "$vault/$d" ] && git -C "$vault" add "$d" || git -C "$vault" add --update "$d" 2>/dev/null || true
+    done <<<"$uniq_dirs"
+
+    # Empty diff after staging → silently skip the commit (don't create empty commits)
+    if [ -z "$(git -C "$vault" diff --cached --name-only)" ]; then
+      :  # nothing to commit
+    else
+      msg=$(cat <<EOF
+bm:enrich: processed $total items ($filed filed, $needs_review_count needs_review, $deferred deferred)
+
+- total:         $total
+- filed:         $filed
+- needs_review:  $needs_review_count
+- deferred:      $deferred
+- fetch-failed:  $fetch_failed
+- llm-failed:    $llm_failed
+EOF
+)
+      git -C "$vault" commit -m "$msg"
+    fi
+  fi
+fi
+```
+
+Where `$total = ${#queue[@]}` (the queue size before the loop). The commit fires even when `fetch_failed > 0` or `llm_failed > 0` — failure-routing is itself a vault mutation worth tracking, and the message body records the counts. Errors that crash the bash block before reaching this step naturally suppress the commit.
+
+The commit does NOT push and does NOT pass `--no-verify`; any pre-commit hooks the user has configured run as normal.
 
 ---
 

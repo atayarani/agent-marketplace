@@ -1,6 +1,6 @@
 ---
 description: "Import a Raindrop HTML export into the bm vault. Parses Netscape Bookmark File format, writes one inbox file per bookmark with imported_tags + imported_collection hints. Does NOT auto-enrich. Use when the user types /bm:import or wants to migrate a Raindrop backup."
-argument-hint: "<path-to-raindrop-export.html>"
+argument-hint: "<path-to-raindrop-export.html> [--commit]"
 ---
 
 Parse a Raindrop HTML export (Netscape Bookmark File Format) and populate the bm vault's `_inbox/` with one file per `<A>` entry. Each imported bookmark carries `imported_tags` (from the bookmark's `TAGS=` attribute) and `imported_collection` (from the innermost `<H3>` ancestor folder) as carry-through hints for the downstream `/bm:enrich`.
@@ -12,6 +12,10 @@ Use the `import` skill's `SKILL.md` for the full runbook. Brief steps:
 3. **Run the parser** — `raindrop_import.py <export-path> --vault $vault`.
 4. **Surface the summary** — `imported: N, skipped: M (deduplicated)`. Suggest `/bm:enrich --limit 20 --no-prompt` to start enrichment of the first batch.
 
+## Flags
+
+- `--commit` — after a successful import, auto-commit the new `_inbox/` files with message `bm:import: imported N from <basename>` plus `skipped: M` in the body. Refuses to commit if the vault has pre-existing staged changes (you can stage them yourself first, run without --commit, or unstage them).
+
 ## Notes
 
 - **Raindrop HTML only**. Pocket, CSV, and JSON exports are not supported.
@@ -22,4 +26,4 @@ Use the `import` skill's `SKILL.md` for the full runbook. Brief steps:
 
 - Auto-trigger `/bm:enrich` after import.
 - Normalize URLs.
-- Commit to git.
+- Commit to git unless `--commit` is passed.

@@ -1,6 +1,6 @@
 ---
 description: "Review the enrichment backlog. With --vocab: batch-promote frequent imported_tags / imported_collection from the inbox to tags.yaml and collection dirs (pre-enrich warmup). Without --vocab: per-bookmark walker for needs_review:true files (post-enrich cleanup). Use when the user types /bm:review or wants to resolve enrichment proposals."
-argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch]"
+argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch] [--commit]"
 ---
 
 Review the enrichment backlog. Two modes:
@@ -33,8 +33,11 @@ Use the `review` skill's `SKILL.md` for the full runbook. Brief steps for `--voc
 - `--limit N` — stop after walking N bookmarks (default unlimited). Useful for piloting before a long session.
 - `--refetch` — re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
 
+**Both modes**
+- `--commit` — after a successful run, auto-commit the changed files with a templated message. In `--vocab` mode: `bm:review --vocab: promoted T tags, created C collections`. In default (walker) mode: `bm:review: resolved N bookmarks (P partial, S skipped)`. Refuses to commit if the vault has pre-existing staged changes (you can stage them yourself first, run without --commit, or unstage them).
+
 ## Do not
 
 - Promote singleton tags by default — they're often typos. Use `--min-count 1` only when you want them surfaced.
-- Commit anything to git — the user commits manually.
+- Commit anything to git unless `--commit` is passed.
 - Touch already-vocab-ed tags or already-existing collections — the scanner filters them out, and the apply step has a defensive check that won't overwrite an existing `README.md`.

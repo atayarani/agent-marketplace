@@ -1,7 +1,7 @@
 ---
 name: import
 description: "Import a Raindrop HTML export into the bm vault. Writes one inbox file per bookmark with carry-through imported_tags and imported_collection hints. Does NOT auto-enrich. Use when the user types /bm:import or wants to migrate a Raindrop backup."
-argument-hint: "<path-to-raindrop-export.html>"
+argument-hint: "<path-to-raindrop-export.html> [--commit]"
 ---
 
 Parse a Raindrop HTML export (Netscape Bookmark File Format) and populate the bm vault's `_inbox/` with one file per `<A>` entry. Each inbox file carries `imported_tags` (from the bookmark's `TAGS=` attribute) and `imported_collection` (from the innermost `<H3>` ancestor folder). The downstream `bm:enricher` subagent reads both as strong hints during enrichment.
@@ -36,11 +36,21 @@ done
 [ -z "$vault" ] && { echo "error: bookmarks vault not found" >&2; exit 1; }
 ```
 
-## 2. Validate the export path
+## 2. Parse arguments + validate the export path
+
+`$ARGUMENTS` may carry the export path plus an optional `--commit` flag (in any order). Strip the flag, keep the remaining token as the export path.
 
 ```bash
-export_path="$ARGUMENTS"
-[ -z "$export_path" ] && { echo "error: usage: /bm:import <export.html>" >&2; exit 1; }
+commit_flag="false"
+export_path=""
+for tok in $ARGUMENTS; do
+  case "$tok" in
+    --commit) commit_flag="true" ;;
+    *) export_path="$tok" ;;
+  esac
+done
+
+[ -z "$export_path" ] && { echo "error: usage: /bm:import <export.html> [--commit]" >&2; exit 1; }
 [ ! -f "$export_path" ] && { echo "error: file not found: $export_path" >&2; exit 1; }
 case "$export_path" in
   *.html|*.htm) ;;
@@ -50,11 +60,21 @@ esac
 
 ## 3. Run the parser
 
+Capture stdout to a temp file so step 5's optional auto-commit can read the `imported: N, skipped: M` counts, while still tee-ing the line back to the user:
+
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-.}/skills/import/lib/raindrop_import.py" "$export_path" --vault "$vault"
+parser_stdout=$(mktemp)
+"${CLAUDE_PLUGIN_ROOT:-.}/skills/import/lib/raindrop_import.py" "$export_path" --vault "$vault" | tee "$parser_stdout"
+parser_rc=${PIPESTATUS[0]}
+[ "$parser_rc" -ne 0 ] && { rm -f "$parser_stdout"; exit "$parser_rc"; }
+
+# Extract counts from the summary line "imported: N, skipped: M (deduplicated)"
+imported_count=$(grep -m1 -Eo 'imported: [0-9]+' "$parser_stdout" | grep -Eo '[0-9]+' || echo 0)
+skipped_count=$(grep -m1 -Eo 'skipped: [0-9]+'  "$parser_stdout" | grep -Eo '[0-9]+' || echo 0)
+rm -f "$parser_stdout"
 ```
 
-Pass through stdout (`imported: N, skipped: M (deduplicated)`) and stderr (one `skip:` line per deduped URL). The parser:
+The parser's stdout line is `imported: N, skipped: M (deduplicated)` and stderr is one `skip:` line per deduped URL. The parser:
 
 - Parses Netscape Bookmark File HTML with BeautifulSoup's `html.parser` backend (Raindrop's HTML is loose; strict parsers reject it).
 - Walks the DOM in document order, tracking an H3 stack: when an `<H3>` is seen, it's pending; when the next `<DL>` opens, the pending text is pushed; when that `<DL>` exits, it's popped. The top of the stack at each `<A>` is the bookmark's `imported_collection`. Root-level bookmarks (no H3 ancestor) get `imported_collection: ""`.
@@ -79,9 +99,39 @@ Run /bm:enrich --limit 20 --no-prompt to process the first batch.
 
 **Do NOT auto-trigger `/bm:enrich`.** A few-thousand-bookmark import enriched in one go would block for hours.
 
-## 5. No git commit
+## 5. Optional auto-commit
 
-User commits manually at milestones.
+If `--commit` is **not** set, exit here — the user commits manually at milestones.
+
+If `--commit` **is** set:
+
+```bash
+if [ "$commit_flag" = "true" ]; then
+  pre_staged=$(git -C "$vault" diff --cached --name-only)
+  if [ -n "$pre_staged" ]; then
+    echo "warning: vault has pre-existing staged changes; skipping auto-commit" >&2
+    echo "staged before this run:" >&2
+    printf '  %s\n' "$pre_staged" >&2
+  else
+    git -C "$vault" add _inbox/
+    if [ -z "$(git -C "$vault" diff --cached --name-only)" ]; then
+      :  # nothing new in _inbox/ (e.g. fully-deduped re-import) — skip commit silently
+    else
+      basename=$(basename "$export_path")
+      msg=$(cat <<EOF
+bm:import: imported $imported_count from $basename
+
+- imported: $imported_count
+- skipped:  $skipped_count
+EOF
+)
+      git -C "$vault" commit -m "$msg"
+    fi
+  fi
+fi
+```
+
+Push is left to the user; the commit does not pass `--no-verify`.
 
 ## Conventions
 
