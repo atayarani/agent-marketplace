@@ -41,16 +41,19 @@
   }).then(
     () => toast("Saved", true),
     () => {
-      // CSP or network error — fall back to GET via popup.
+      // Primary path failed — could be daemon down OR strict CSP blocking
+      // fetch. ALWAYS show a toast so the user gets clear feedback. Then
+      // try the popup-GET fallback (helps in the CSP case; harmless if
+      // daemon is down — popup just shows connection-refused briefly).
+      toast("Failed — opening fallback popup", false);
       const q =
         "url=" + encodeURIComponent(u) +
         "&title=" + encodeURIComponent(t);
-      const w = window.open(
+      window.open(
         "http://localhost:9876/add?" + q,
         "_blank",
-        "width=320,height=120"
+        "width=320,height=160"
       );
-      if (!w) toast("Blocked — daemon may be down", false);
     }
   );
 })();
