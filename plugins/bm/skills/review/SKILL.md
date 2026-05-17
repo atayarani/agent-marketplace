@@ -181,26 +181,42 @@ After both phases complete (or terminate via "Skip remaining"):
 ```yaml
   - name: <c.canonical>
     description: <c.canonical>
-    aliases: [<c.variants joined with ", ">]
+    aliases: [<quoted_variants_csv>]
 ```
 
-When `c.variants` is empty, write `aliases: []`. Variant strings are appended verbatim (raw casing preserved); if any variant contains a YAML-special character (`:`, `#`, etc.) the whole alias list block must be written without quoting issues — in practice the imported_tags values seen so far are all simple identifiers, but if a variant looks unsafe, double-quote it with backslash-escaping.
+**Variant quoting (mandatory)** — every variant must be wrapped in double quotes with `\` and `"` escaped, even when it looks "safe". Reason: unquoted variants in a flow list break when they contain `]`, `,`, `"`, leading whitespace, or other YAML-special chars (e.g., `aliases: [bracket]close]` parses as `[bracket]` + dangling junk). Always quote, always escape — never special-case.
+
+Escape rule per variant (matches `yaml_dq()` in `skills/import/lib/raindrop_import.py`):
+1. Replace every `\` with `\\`.
+2. Replace every `"` with `\"`.
+3. Wrap result in `"…"`.
+
+Example transformations:
+| variant input  | output token        |
+|----------------|---------------------|
+| `IMDb`         | `"IMDb"`            |
+| `with,comma`   | `"with,comma"`      |
+| `bracket]close`| `"bracket]close"`   |
+| `quote"in`     | `"quote\"in"`       |
+| `back\slash`   | `"back\\slash"`     |
+
+Then `quoted_variants_csv = ", ".join(quoted_tokens)`. When `c.variants` is empty, write `aliases: []` (no quoting needed for an empty list).
 
 Ensure `tags.yaml` ends with a newline before appending. Concatenate all new entries (preceded by a single blank line for visual separation from existing entries) and append in one write.
 
-Bash sketch:
-```bash
-# Ensure trailing newline
-[ -n "$(tail -c1 "$vault/tags.yaml")" ] && printf '\n' >> "$vault/tags.yaml"
-printf '\n' >> "$vault/tags.yaml"
+Python sketch (preferred — bash heredocs can't safely re-quote):
+```python
+def yaml_dq(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-# For each accepted tag (loop in shell or write via Python):
-cat >> "$vault/tags.yaml" <<EOF
-  - name: $canonical
-    description: $canonical
-    aliases: [$variants_csv]
-EOF
+for c in accepted_tags:
+    quoted = ", ".join(yaml_dq(v) for v in c["variants"])
+    block += f"  - name: {c['canonical']}\n"
+    block += f"    description: {c['canonical']}\n"
+    block += f"    aliases: [{quoted}]\n"
 ```
+
+**Verification after write**: parse the resulting `tags.yaml` with `yaml.safe_load` (one-shot). If it fails, the append corrupted the file — abort and surface the parse error so the user can roll back from git. (Existing entries are not re-quoted; only newly-appended ones use the strict-quote form. This is intentional: the existing seed-tag entries are known-safe.)
 
 Where `$variants_csv` is the comma-space-joined list (empty for `aliases: []`).
 
