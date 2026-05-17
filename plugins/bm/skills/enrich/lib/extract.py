@@ -15,7 +15,7 @@ record to stdout.
 
 Usage:  extract.py <inbox-file>
 
-Output schema (always all eight keys; null/empty for absent values):
+Output schema (always all nine keys; null/empty for absent values):
   {
     "url":                  "https://...",
     "fetch_status":         200,
@@ -25,7 +25,8 @@ Output schema (always all eight keys; null/empty for absent values):
                               "site_name": "...", "type": "..."},
     "json_ld":              <parsed JSON> | null,
     "body_text_excerpt":    "...",     # first 4096 chars of body get_text
-    "web_search_override":  true | false | null   # from `web_search` fm key
+    "web_search_override":  true | false | null,  # from `web_search` fm key
+    "inbox_title":          "..." | null  # from inbox fm `title:` (bookmarklet captures)
   }
 
 On fetch failure (timeout, non-2xx after one retry), an informative error is
@@ -60,9 +61,11 @@ def die(msg: str, code: int = 1) -> NoReturn:
 def read_frontmatter(path: Path) -> dict[str, Any]:
     """Parse inbox file frontmatter.
 
-    Returns {"url": str, "web_search_override": bool | None}. `url` is required;
+    Returns {"url": str, "web_search_override": bool | None,
+             "inbox_title": str | None}. `url` is required;
     `web_search_override` reflects the optional `web_search: true|false`
-    frontmatter key (None when absent).
+    frontmatter key (None when absent). `inbox_title` reflects the optional
+    `title:` frontmatter key (typically set by the bookmarklet at capture time).
     """
     try:
         content = path.read_text(encoding="utf-8")
@@ -81,7 +84,18 @@ def read_frontmatter(path: Path) -> dict[str, Any]:
     override: bool | None = None
     if wm:
         override = wm.group(1).lower() == "true"
-    return {"url": um.group(1).strip(), "web_search_override": override}
+    tm = re.search(r'^title:\s*"?(.+?)"?\s*$', fm, re.MULTILINE)
+    inbox_title: str | None = None
+    if tm:
+        raw = tm.group(1).strip()
+        # Unescape \" inside the captured value (server.py writes \" for inner quotes)
+        raw = raw.replace('\\"', '"')
+        inbox_title = raw or None
+    return {
+        "url": um.group(1).strip(),
+        "web_search_override": override,
+        "inbox_title": inbox_title,
+    }
 
 
 def fetch(url: str) -> httpx.Response:
@@ -181,6 +195,7 @@ def main() -> int:
         "json_ld": extract_json_ld(soup),
         "body_text_excerpt": extract_body_excerpt(soup),
         "web_search_override": fm["web_search_override"],
+        "inbox_title": fm["inbox_title"],
     }
     json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")

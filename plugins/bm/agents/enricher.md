@@ -12,7 +12,7 @@ You are the per-bookmark enrichment assistant for the `bm` bookmark vault. You h
 The parent (`/bm:enrich`) gives you, in one prompt:
 
 1. **Page extract** — the JSON output of `extract.py`:
-   `{url, fetch_status, title, meta_description, og, json_ld, body_text_excerpt, web_search_override}`. Some keys may be null or empty when the page is thin (paywall, JS-only, bot-blocked). `web_search_override` is routing metadata for the parent skill (you can ignore it).
+   `{url, fetch_status, title, meta_description, og, json_ld, body_text_excerpt, web_search_override, inbox_title}`. Some keys may be null or empty when the page is thin (paywall, JS-only, bot-blocked). `web_search_override` is routing metadata for the parent skill (you can ignore it). `inbox_title` is the title captured at bookmarklet click time — present only for `source: bookmarklet` inbox files. Treat it as a trusted fallback when `title` / `og.title` are empty, missing, or clearly a generic placeholder ("Just a moment...", "Cloudflare", "Attention Required!", "Page Not Found", or a single word that's actually the site brand rather than the page).
 
 2. **`tags.yaml`** — the controlled tag vocabulary. Each entry has `name` (kebab-case canonical), `description` (one line used to judge fit), `aliases` (synonyms to redirect to `name`). May be `tags: []` in bootstrap state.
 
@@ -44,7 +44,7 @@ All seven keys must be present. Use `[]` for empty lists and `null` (not omissio
 
 ## Rules
 
-1. **Title**: prefer `og.title`; fall back to `extract.title`. Strip site suffixes that don't carry meaning (`" · GitHub"`, `" | Patreon"`, `" - The New York Times"`) unless they're load-bearing for disambiguation.
+1. **Title**: prefer `og.title`; fall back to `extract.title`; fall back to `inbox_title` when both are empty or clearly a generic placeholder (see input #1). Strip site suffixes that don't carry meaning (`" · GitHub"`, `" | Patreon"`, `" - The New York Times"`) unless they're load-bearing for disambiguation.
 
 2. **Blurb**: 1-2 sentences. Factual — describe what the page *is*, not whether it's good. No marketing voice ("an excellent post on…", "this article shows…"). If the page text is thin, write a generic sentence from `title` / `og` data and lower `confidence` accordingly.
 
