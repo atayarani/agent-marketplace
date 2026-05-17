@@ -1,13 +1,13 @@
 ---
-description: "Review the enrichment backlog. With --vocab: batch-promote frequent imported_tags / imported_collection from the inbox to tags.yaml and collection dirs (pre-enrich warmup). Without --vocab: per-bookmark walker for needs_review:true files (post-enrich cleanup, Phase 2.B — not yet implemented). Use when the user types /bm:review or wants to resolve enrichment proposals."
-argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed]"
+description: "Review the enrichment backlog. With --vocab: batch-promote frequent imported_tags / imported_collection from the inbox to tags.yaml and collection dirs (pre-enrich warmup). Without --vocab: per-bookmark walker for needs_review:true files (post-enrich cleanup). Use when the user types /bm:review or wants to resolve enrichment proposals."
+argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch]"
 ---
 
 Review the enrichment backlog. Two modes:
 
-1. **`--vocab` (pre-enrich warmup, this phase)** — scans `_inbox/*.md` for frequency-ranked `imported_tags` and `imported_collection` hints (from Raindrop import). Presents them in chunks of 5 via `AskUserQuestion`; batch-accepts promote tags into `tags.yaml` and create collection dirs with `README.md`. Best run after `/bm:import` and **before** `/bm:enrich` drains the queue — pre-populating the vocab means most subsequent enrichments produce clean filings (no `needs_review: true`).
+1. **`--vocab` (pre-enrich warmup)** — scans `_inbox/*.md` for frequency-ranked `imported_tags` and `imported_collection` hints (from Raindrop import). Presents them in chunks of 5 via `AskUserQuestion`; batch-accepts promote tags into `tags.yaml` and create collection dirs with `README.md`. Best run after `/bm:import` and **before** `/bm:enrich` drains the queue — pre-populating the vocab means most subsequent enrichments produce clean filings (no `needs_review: true`).
 
-2. **Default (post-enrich walker, Phase 2.B)** — walks `needs_review: true` bookmarks one at a time. **Not yet implemented**; running `/bm:review` without `--vocab` prints a stub message and exits 0.
+2. **Default (post-enrich walker)** — walks `needs_review: true` filed bookmarks one at a time, surfacing each via `AskUserQuestion`. For each: promote any `proposed_tags` to `tags.yaml`, accept/reject the `proposed_collection`, or move the bookmark to a different collection. Resumable — re-runs pick up where the prior session left off.
 
 Use the `review` skill's `SKILL.md` for the full runbook. Brief steps for `--vocab`:
 
@@ -20,10 +20,18 @@ Use the `review` skill's `SKILL.md` for the full runbook. Brief steps for `--voc
 
 ## Flags
 
-- `--vocab` — run the pre-enrich warmup. Required in this phase (default mode is the Phase 2.B walker stub).
+**Mode selector**
+- `--vocab` — run the pre-enrich warmup. Omit to run the default-mode walker.
+
+**`--vocab`-only flags**
 - `--min-count N` — frequency threshold (default 2). Lower to `1` to surface singletons (often typos or one-offs); raise to prune more aggressively.
 - `--top N` — cap on candidates per category (default 50). Prevents drowning the user.
 - `--include-filed` — also scan filed bookmarks under `<collection>/*.md` in addition to `_inbox/*.md`. No-op in practice today (filed bookmarks don't carry `imported_*` fields); reserved for future use.
+
+**Default-mode flags** (only when `--vocab` is not set)
+- `--collection X` — restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are untouched.
+- `--limit N` — stop after walking N bookmarks (default unlimited). Useful for piloting before a long session.
+- `--refetch` — re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
 
 ## Do not
 

@@ -1,13 +1,13 @@
 ---
 name: review
-description: "Review the enrichment backlog. --vocab mode: batch-promote frequent imported_tags / imported_collection values from the inbox to tags.yaml + collection dirs (pre-enrich warmup, this phase). Default mode: per-bookmark walker for needs_review:true files (post-enrich cleanup, Phase 2.B — not yet implemented). Idempotent; no git commits. Use when the user wants to resolve proposals after /bm:import or /bm:enrich."
-argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed]"
+description: "Review the enrichment backlog. --vocab mode: batch-promote frequent imported_tags / imported_collection values from the inbox to tags.yaml + collection dirs (pre-enrich warmup). Default mode: per-bookmark walker for needs_review:true files (post-enrich cleanup). Idempotent; no git commits. Use when the user wants to resolve proposals after /bm:import or /bm:enrich."
+argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch]"
 ---
 
 Two modes:
 
-- **`--vocab` (pre-enrich, this phase)** — scans the inbox for frequency-ranked `imported_tags` and `imported_collection` hints, presents them in chunks via `AskUserQuestion`, batch-promotes accepted tags to `tags.yaml` and accepted collections to on-disk dirs. Best run after `/bm:import` and **before** `/bm:enrich` drains the queue.
-- **Default (post-enrich walker, Phase 2.B)** — walks `needs_review: true` filed bookmarks one at a time. **Not yet implemented in this phase**; this skill prints a stub message and exits 0 when invoked without `--vocab`.
+- **`--vocab` (pre-enrich)** — scans the inbox for frequency-ranked `imported_tags` and `imported_collection` hints, presents them in chunks via `AskUserQuestion`, batch-promotes accepted tags to `tags.yaml` and accepted collections to on-disk dirs. Best run after `/bm:import` and **before** `/bm:enrich` drains the queue.
+- **Default (post-enrich walker)** — walks `needs_review: true` filed bookmarks one at a time, surfacing each via `AskUserQuestion`. For each: promote any `proposed_tags` to `tags.yaml`, accept/reject the `proposed_collection`, or move the bookmark elsewhere. Resumable — re-runs pick up where the prior session left off.
 
 `$ARGUMENTS` carries any flags the user passed.
 
@@ -36,21 +36,367 @@ fi
 ## 2. Parse arguments
 
 From `$ARGUMENTS`:
-- `--vocab` — boolean flag (default false). When set, run vocab-warmup mode (sections 4-7). When unset, run default-mode stub (section 3).
+
+**Mode selector**
+- `--vocab` — boolean flag (default false). When set, run vocab-warmup mode (sections 4-8). When unset, run default-mode walker (section 3).
+
+**Vocab-mode flags** (only meaningful when `--vocab` is set)
 - `--min-count N` — integer (default 2). Tag/collection frequency threshold for promotion. Lower it (e.g. `--min-count 1`) to surface singletons; raise it to prune more aggressively.
 - `--top N` — integer (default 50). Cap on candidates per category. Prevents drowning the user.
 - `--include-filed` — boolean flag (default false). Also scan filed bookmarks under `$vault/<collection>/*.md`, not just `_inbox/*.md`. (Filed bookmarks per current enrich shape don't carry `imported_*` fields, so this is a no-op in practice today — kept for forward compatibility.)
 
-## 3. Default mode (stub for Phase 2.B)
+**Default-mode flags** (only meaningful when `--vocab` is NOT set)
+- `--collection X` — string (default empty). Restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are not touched.
+- `--limit N` — integer (default unlimited). Stop after walking N bookmarks. Useful for piloting before committing to a long session.
+- `--refetch` — boolean flag (default false). Re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
 
-If `--vocab` is NOT set:
+## 3. Default mode — per-bookmark walker
+
+If `--vocab` is NOT set, walk every `needs_review: true` filed bookmark once, surfacing each via `AskUserQuestion`. The walker is host-LLM-driven: this section orchestrates `Bash` + `Read` + `AskUserQuestion` calls; there is no helper script.
+
+### 3.a — Build the queue
 
 ```bash
-echo "/bm:review: default-mode walker is Phase 2.B; not yet implemented. Rerun with --vocab to run the pre-enrich vocab warmup."
-exit 0
+queue_raw=$(mktemp)
+rg -l '^needs_review: true$' "$vault" --type md \
+  --glob '!_inbox/**' --glob '!_failed/**' --glob '!_trash/**' --glob '!_broken/**' \
+  --glob '!_proposals/**' --glob '!outputs/**' \
+  2>/dev/null > "$queue_raw" || true
+
+# Optional --collection scope
+if [ -n "$collection_filter" ]; then
+  grep "^$vault/$collection_filter/" "$queue_raw" > "$queue_raw.f" 2>/dev/null || : > "$queue_raw.f"
+  mv "$queue_raw.f" "$queue_raw"
+fi
 ```
 
-Phase 2.B will replace this branch with the per-bookmark walker for `needs_review: true` files.
+### 3.b — Sort by `enriched:` descending and apply `--limit`
+
+`enriched:` is an ISO-8601 timestamp; lexicographic sort matches chronological sort. Emit one `<path>\t<enriched>` line per file, then `sort -k2,2 -r` and `cut`.
+
+```bash
+queue_sorted=$(mktemp)
+python3 - "$queue_raw" <<'PYEOF' > "$queue_sorted"
+import sys, re
+paths = [p for p in open(sys.argv[1]).read().splitlines() if p]
+rows = []
+for p in paths:
+    enriched = ""
+    try:
+        with open(p) as f:
+            head = f.read(4096)
+        m = re.search(r"^enriched:\s*(\S+)", head, re.MULTILINE)
+        if m:
+            enriched = m.group(1)
+    except OSError:
+        pass
+    rows.append((enriched, p))
+# Sort by enriched desc; missing enriched sorts last.
+rows.sort(key=lambda r: (r[0] == "", r[0]), reverse=False)
+rows.sort(key=lambda r: r[0], reverse=True)
+for enriched, p in rows:
+    print(p)
+PYEOF
+
+# Apply --limit (no-op if unlimited)
+if [ -n "$limit" ]; then
+  head -n "$limit" "$queue_sorted" > "$queue_sorted.l" && mv "$queue_sorted.l" "$queue_sorted"
+fi
+
+queue_count=$(wc -l < "$queue_sorted" | tr -d ' ')
+```
+
+### 3.c — Empty queue
+
+```bash
+if [ "$queue_count" -eq 0 ]; then
+  echo "no bookmarks need review"
+  rm -f "$queue_raw" "$queue_sorted"
+  exit 0
+fi
+echo "/bm:review: walking $queue_count bookmark(s) with needs_review:true"
+```
+
+Initialize counters in working memory: `resolved=0`, `partially=0`, `skipped=0`.
+
+### 3.d — Per-bookmark loop
+
+Use the `Read` tool to load `$queue_sorted`; iterate paths in order. For each `bookmark_file`:
+
+**i. Parse frontmatter** via inline Python. The system `python3` does not have `pyyaml`; use `uv run --with pyyaml` (matches the dep-management pattern from `vocab_warmup.py`):
+
+```bash
+uv run --quiet --with pyyaml --no-project -- python3 - "$bookmark_file" <<'PYEOF' > /tmp/bm_review_fm.json
+import sys, yaml, re, json, os
+path = sys.argv[1]
+content = open(path).read()
+m = re.match(r"^---\n(.*?)\n---\n?(.*)", content, re.DOTALL)
+if not m:
+    # File has `needs_review: true` somewhere in the body but no YAML frontmatter
+    # (e.g. a design doc containing an example). Mark as skip; walker drops it.
+    print(json.dumps({"_skip": True, "_reason": "no frontmatter"}))
+    sys.exit(0)
+try:
+    fm = yaml.safe_load(m.group(1)) or {}
+except yaml.YAMLError as e:
+    print(json.dumps({"_skip": True, "_reason": f"malformed frontmatter: {e}"}))
+    sys.exit(0)
+# Confirm `needs_review: true` is actually IN the frontmatter, not just the body.
+if fm.get("needs_review") is not True:
+    print(json.dumps({"_skip": True, "_reason": "needs_review not in frontmatter"}))
+    sys.exit(0)
+out = {
+    "url":                fm.get("url", ""),
+    "title":              fm.get("title", ""),
+    "blurb":              fm.get("blurb", ""),
+    "tags":               fm.get("tags") or [],
+    "confidence":         fm.get("confidence", 1.0),
+    "proposed_tags":      fm.get("proposed_tags") or [],
+    "proposed_collection": fm.get("proposed_collection"),
+    "current_collection": os.path.basename(os.path.dirname(path)),
+}
+print(json.dumps(out))
+PYEOF
+```
+
+Then `Read` `/tmp/bm_review_fm.json` and parse into working memory. If the JSON has `_skip: true`, log `skipping <path>: <_reason>` to stderr, increment `skipped`, and `continue` to the next bookmark — do **not** prompt the user.
+
+**ii. Optional refetch** (only if `--refetch`):
+
+```bash
+script="${CLAUDE_PLUGIN_ROOT:-/Users/ali/.claude/plugins/marketplaces/agent-marketplace/plugins/bm}/skills/enrich/lib/extract.py"
+extract_out=$("$script" "$bookmark_file" 2>/dev/null) || extract_out=""
+```
+
+If extract succeeded, parse JSON, extract a fresh blurb candidate from `body_text_excerpt` (first ~280 chars), and rewrite `blurb:` via section 3.f's mutation pattern with mode `set-blurb`. Skip silently on failure (cached blurb stays).
+
+**iii. Choose the prompt variant** based on parsed frontmatter:
+
+- **Variant A** (full) — used when `proposed_tags` is non-empty OR `proposed_collection` is non-null.
+- **Variant B** (low-confidence-only) — used when both are empty/null. The only reason this bookmark needs review is `confidence < 0.4`; the user just needs to confirm or move.
+
+**iv. Build the question text** (used by both variants):
+
+```
+<title>
+<url>
+
+blurb:    <blurb>
+
+tags:               <tags list, joined by ", ">
+current collection: <current_collection>
+confidence:         <confidence>
+
+proposed_tags:       <proposed_tags joined; or "(none)">
+proposed_collection: <proposed_collection.name> — <proposed_collection.description>
+                     (or "(none)")
+```
+
+Truncate `blurb` to ~240 chars if longer, with `...` suffix.
+
+**v. Call `AskUserQuestion`**:
+
+**Variant A options** (4; "Other" auto-added):
+1. `"Accept all proposed"` — `"Promote proposed_tags to tags.yaml + bookmark.tags; create proposed_collection/ + mv bookmark there."`
+2. `"Accept tags, reject collection"` — `"Promote proposed_tags; clear proposed_collection; bookmark stays in current dir."`
+3. `"Reject all proposed"` — `"Clear all proposed_* fields; bookmark stays as-is."`
+4. `"Move to different collection"` — `"Pick an existing dir via a follow-up prompt."`
+
+**Variant B options** (2; "Other" auto-added):
+1. `"Confirm placement (clear needs_review)"` — `"Keep current tags + collection; clear needs_review + confidence."` (Equivalent to Reject-all on a no-proposals bookmark, but framed for clarity.)
+2. `"Move to different collection"` — `"Pick an existing dir via a follow-up prompt."`
+
+Both variants use:
+- `header`: `"Resolve"` (or first ~12 chars of the title)
+- `multiSelect`: `false`
+
+### 3.e — Apply the decision
+
+Branch on the option label. Use the mutation helper in 3.f. Update counters at the end of each branch.
+
+**Option 1 (Variant A) — Accept all proposed**
+
+1. Tag promotion: for each tag in `proposed_tags`, if not already present in `tags.yaml`, append using the `yaml_dq` pattern from section 7.a (variants list is empty since the LLM proposed a single canonical form):
+   ```yaml
+     - name: <tag>
+       description: <tag>
+       aliases: []
+   ```
+   Then merge `proposed_tags` into the bookmark's `tags` list (preserving order, dedup).
+2. Collection creation (if `proposed_collection` non-null):
+   ```bash
+   slug=<proposed_collection.name>
+   mkdir -p "$vault/$slug"
+   if [ ! -f "$vault/$slug/README.md" ]; then
+     printf '# %s\n\n%s\n' "$slug" "<proposed_collection.description>" > "$vault/$slug/README.md"
+   fi
+   target="$vault/$slug/$(basename "$bookmark_file")"
+   if [ -e "$target" ] && [ "$target" != "$bookmark_file" ]; then
+     echo "warn: $target exists; leaving bookmark in place" >&2
+   else
+     mv "$bookmark_file" "$target"
+     bookmark_file="$target"
+   fi
+   ```
+3. Frontmatter mutation: mode `clear-proposals-merge-tags` (see 3.f).
+4. If `needs_review` was cleared → `resolved++`, else `partially++`.
+
+**Option 2 (Variant A) — Accept tags, reject collection**
+
+1. Tag promotion (same as Option 1 step 1).
+2. Frontmatter mutation: mode `clear-proposals-merge-tags`. (Same mutation as Option 1; the difference is we don't `mv` the file.)
+3. Counter update as above.
+
+**Option 3 (Variant A) — Reject all proposed**
+
+1. Frontmatter mutation: mode `clear-proposals` (drops `proposed_tags` + `proposed_collection`; does NOT merge tags).
+2. If `needs_review` was cleared → `resolved++`, else `partially++`.
+
+**Option 4 (Variant A) or Option 2 (Variant B) — Move to different collection**
+
+Build a recency-ranked list of existing collection dirs:
+
+```bash
+python3 - "$vault" <<'PYEOF' > /tmp/bm_review_dirs.txt
+import os, sys, re, glob
+vault = sys.argv[1]
+dirs = []
+for entry in os.listdir(vault):
+    p = os.path.join(vault, entry)
+    if not os.path.isdir(p): continue
+    if entry.startswith("_") or entry.startswith("."): continue
+    # Most recent enriched among files in this dir
+    latest = ""
+    for f in glob.glob(os.path.join(p, "*.md")):
+        try:
+            with open(f) as fh: head = fh.read(2048)
+            m = re.search(r"^enriched:\s*(\S+)", head, re.MULTILINE)
+            if m and m.group(1) > latest: latest = m.group(1)
+        except OSError: pass
+    dirs.append((latest, entry))
+dirs.sort(reverse=True)
+for _, e in dirs: print(e)
+PYEOF
+```
+
+Take the top 3 dirs (skipping the bookmark's `current_collection`) and call `AskUserQuestion`:
+- `header`: `"Move to"`
+- `question`: `"Move '<title>' from <current_collection>/ to which collection?"`
+- `options`: 3 labels = top 3 dir names; descriptions = a one-line README excerpt if available, else dir name. "Other" auto-added for free-text entry of any other dir.
+- `multiSelect`: `false`
+
+On selection:
+- If existing dir → `mv "$bookmark_file" "$vault/$choice/"`.
+- If "Other" + free-text → treat the text as a kebab-case dir name. If the dir doesn't exist, create it via the same `mkdir + README` pattern as Option 1 (description: empty body; user edits later). Then `mv`.
+
+Frontmatter mutation: mode `clear-proposed-collection` (drops `proposed_collection` only). Then recompute `needs_review`.
+
+**Option 1 (Variant B) — Confirm placement**
+
+Frontmatter mutation: mode `clear-proposals` (no-op on the proposed fields since they're already empty; main effect is to force the recompute and drop `needs_review` + `confidence`). Note: with `confidence < 0.4`, the recompute keeps `needs_review: true` — the only way to clear it from this state is to first re-enrich at a higher confidence, OR for the user to explicitly override.
+
+For now, treat "Confirm placement" as a **force-clear**: in addition to the usual recompute, unconditionally drop `needs_review` and `confidence`. This is the user explicitly saying "this is fine; stop asking." Use mutation mode `force-clear` (see 3.f).
+
+`resolved++`.
+
+**"Other" / free-text on main prompt**
+
+Print `skipped: <user_text>` to stderr; do nothing to the file. `skipped++`.
+
+### 3.f — Frontmatter mutation helper
+
+Use `ruamel.yaml` (not `pyyaml`) here: it round-trips with formatting preserved — flow-style `tags: [a, b, c]` stays flow-style, ISO-8601 datetimes keep the `T` separator, double-quoted strings keep their quotes. Plain `pyyaml.safe_dump` reformats all three and would churn the file.
+
+```bash
+uv run --quiet --with ruamel.yaml --no-project -- python3 - "$bookmark_file" "$mode" <<'PYEOF'
+import sys, re, io
+from ruamel.yaml import YAML
+path, mode = sys.argv[1], sys.argv[2]
+content = open(path).read()
+m = re.match(r"^---\n(.*?)\n---\n?(.*)", content, re.DOTALL)
+yaml = YAML()
+yaml.preserve_quotes = True
+yaml.width = 9999  # prevent ruamel from wrapping long quoted scalars (e.g. blurb)
+fm = yaml.load(m.group(1))
+body = m.group(2)
+
+proposed_tags = list(fm.get("proposed_tags") or [])
+
+def drop(*keys):
+    for k in keys:
+        if k in fm: del fm[k]
+
+if mode == "clear-proposals-merge-tags":
+    tags = fm.get("tags")
+    if tags is None:
+        tags = []
+        fm["tags"] = tags
+    for t in proposed_tags:
+        if t not in tags:
+            tags.append(t)
+    drop("proposed_tags", "proposed_collection")
+elif mode == "clear-proposals":
+    drop("proposed_tags", "proposed_collection")
+elif mode == "clear-proposed-collection":
+    drop("proposed_collection")
+elif mode == "force-clear":
+    drop("proposed_tags", "proposed_collection", "needs_review", "confidence")
+elif mode == "set-blurb":
+    import os
+    new_blurb = os.environ.get("NEW_BLURB", "")
+    if new_blurb:
+        fm["blurb"] = new_blurb
+
+# Recompute needs_review (skipped for force-clear, which already cleared it)
+if mode != "force-clear":
+    still = (
+        (fm.get("confidence", 1.0) < 0.4) or
+        bool(fm.get("proposed_tags")) or
+        bool(fm.get("proposed_collection"))
+    )
+    if still:
+        fm["needs_review"] = True
+    else:
+        drop("needs_review", "confidence")
+
+buf = io.StringIO()
+yaml.dump(fm, buf)
+with open(path, "w") as f:
+    f.write("---\n" + buf.getvalue() + "---\n" + body)
+
+print("1" if fm.get("needs_review") else "0")
+PYEOF
+```
+
+Capture the trailing `1` / `0` to decide whether to `resolved++` or `partially++`.
+
+### 3.g — Tag promotion to `tags.yaml` (reused from section 7.a)
+
+When Options 1 or 2 promote new `proposed_tags`, append to `$vault/tags.yaml` using the exact `yaml_dq` quoting pattern from section 7.a. Since `proposed_tags` come from the LLM enricher (no variants), the entry is always:
+
+```yaml
+  - name: <tag>
+    description: <tag>
+    aliases: []
+```
+
+Check first whether the tag already exists in `tags.yaml` (union of `name` + `aliases`, canonicalized per section "Conventions"). If yes, skip the append — no duplicates.
+
+### 3.h — Summary
+
+After the loop completes (or `--limit` is hit), print:
+
+```
+/bm:review: walked <queue_count> bookmark(s)
+  resolved:  <resolved>  (needs_review cleared)
+  partially: <partially> (needs_review:true remains, but proposals resolved)
+  skipped:   <skipped>   (no decision)
+```
+
+Then:
+```bash
+rm -f "$queue_raw" "$queue_sorted" /tmp/bm_review_fm.json /tmp/bm_review_dirs.txt
+```
 
 ## 4. Vocab mode — run the scanner
 
