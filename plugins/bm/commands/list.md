@@ -12,7 +12,7 @@ Use the `list` skill's `SKILL.md` for the full runbook. The skill walks `<collec
 - `--tag X` (repeatable) — bookmark must have X in its `tags:` list. Multiple `--tag` flags AND together (intersection).
 - `--collection Y` — scope to `$vault/Y/`.
 - `--status Z` — bookmark's `status:` field equals Z (`active`, `broken`, `archived`).
-- `--search W` — case-insensitive substring match against `title:` + `blurb:`. URL and body are not searched.
+- `--search W` — case-insensitive substring match against `title:` + the blurb (body content above the `<!-- /llm-managed -->` marker). URL and user-notes body are not searched.
 - `--limit N` — cap on results (default `20`).
 - `--sort captured|enriched` — sort key, descending (default `captured`).
 - `--format table|list|json` — output shape (default `table`).

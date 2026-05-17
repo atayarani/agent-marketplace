@@ -52,7 +52,7 @@ From `$ARGUMENTS`:
 **Default-mode flags** (only meaningful when `--vocab` is NOT set)
 - `--collection X` — string (default empty). Restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are not touched.
 - `--limit N` — integer (default unlimited). Stop after walking N bookmarks. Useful for piloting before committing to a long session.
-- `--refetch` — boolean flag (default false). Re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
+- `--refetch` — boolean flag (default false). Re-run `extract.py` on each bookmark and replace its cached blurb (in the body, above the `<!-- /llm-managed -->` marker) before prompting. Rare; the cached blurb is normally trustworthy. User notes below the marker are preserved.
 
 **Both modes**
 - `--commit` — boolean flag (default false). After the run completes, auto-commit the touched paths (`tags.yaml` + created/moved collection dirs) with a mode-specific templated message (see section 9). Refuses to commit if the vault has pre-existing staged changes. Push is left to the user.
@@ -160,10 +160,17 @@ except yaml.YAMLError as e:
 if fm.get("needs_review") is not True:
     print(json.dumps({"_skip": True, "_reason": "needs_review not in frontmatter"}))
     sys.exit(0)
+LLM_MARKER = "<!-- /llm-managed -->"
+body = m.group(2) or ""
+if LLM_MARKER in body:
+    blurb = body.partition(LLM_MARKER)[0].strip()
+else:
+    # Pre-migration fallback: blurb may still be in frontmatter
+    blurb = fm.get("blurb", "") or body.strip()
 out = {
     "url":                fm.get("url", ""),
     "title":              fm.get("title", ""),
-    "blurb":              fm.get("blurb", ""),
+    "blurb":              blurb,
     "tags":               fm.get("tags") or [],
     "confidence":         fm.get("confidence", 1.0),
     "proposed_tags":      fm.get("proposed_tags") or [],
@@ -357,10 +364,23 @@ elif mode == "clear-proposed-collection":
 elif mode == "force-clear":
     drop("proposed_tags", "proposed_collection", "needs_review", "confidence")
 elif mode == "set-blurb":
+    # v1.3+: blurb lives in body, above the `<!-- /llm-managed -->` marker.
+    # Drop any legacy `blurb:` from frontmatter and rewrite the body region.
     import os
-    new_blurb = os.environ.get("NEW_BLURB", "")
+    new_blurb = os.environ.get("NEW_BLURB", "").strip()
     if new_blurb:
-        fm["blurb"] = new_blurb
+        drop("blurb")
+        LLM_MARKER = "<!-- /llm-managed -->"
+        if LLM_MARKER in body:
+            _, _, user_notes = body.partition(LLM_MARKER)
+            user_notes = user_notes.lstrip("\n").rstrip()
+        else:
+            user_notes = body.strip()
+        parts = [new_blurb, LLM_MARKER]
+        new_body = "\n\n" + "\n\n".join(parts) + "\n"
+        if user_notes:
+            new_body += "\n" + user_notes + "\n"
+        body = new_body
 
 # Recompute needs_review (skipped for force-clear, which already cleared it)
 if mode != "force-clear":

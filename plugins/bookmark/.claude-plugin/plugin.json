@@ -1,0 +1,5 @@
+{
+  "name": "bookmark",
+  "version": "1.2.0",
+  "description": "Long-form alias for the `bm` plugin (Raindrop-style bookmark manager). All commands and skills are shared via symlink; /bookmark:* and /bm:* are interchangeable."
+}

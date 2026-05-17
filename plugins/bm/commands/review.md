@@ -31,7 +31,7 @@ Use the `review` skill's `SKILL.md` for the full runbook. Brief steps for `--voc
 **Default-mode flags** (only when `--vocab` is not set)
 - `--collection X` — restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are untouched.
 - `--limit N` — stop after walking N bookmarks (default unlimited). Useful for piloting before a long session.
-- `--refetch` — re-run `extract.py` on each bookmark and replace its cached `blurb:` before prompting. Rare; the cached blurb is normally trustworthy.
+- `--refetch` — re-run `extract.py` on each bookmark and replace its cached blurb (body above the `<!-- /llm-managed -->` marker) before prompting. Rare; the cached blurb is normally trustworthy. User notes below the marker are preserved.
 
 **Both modes**
 - `--commit` — after a successful run, auto-commit the changed files with a templated message. In `--vocab` mode: `bm:review --vocab: promoted T tags, created C collections`. In default (walker) mode: `bm:review: resolved N bookmarks (P partial, S skipped)`. Refuses to commit if the vault has pre-existing staged changes (you can stage them yourself first, run without --commit, or unstage them).

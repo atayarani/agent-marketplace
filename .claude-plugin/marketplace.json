@@ -22,6 +22,10 @@
     {
       "name": "bm",
       "source": "./plugins/bm"
+    },
+    {
+      "name": "bookmark",
+      "source": "./plugins/bookmark"
     }
   ]
 }

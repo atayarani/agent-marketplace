@@ -102,6 +102,15 @@ except SystemExit:
 paths = [ln for ln in open(candidates_path).read().splitlines() if ln]
 search_lower = args.search.lower() if args.search else None
 
+LLM_MARKER = "<!-- /llm-managed -->"
+
+def extract_blurb(body: str) -> str:
+    """Body convention: blurb is above the marker; user notes below.
+    Pre-migration files have `blurb:` in frontmatter and an empty body."""
+    if LLM_MARKER in body:
+        return body.partition(LLM_MARKER)[0].strip()
+    return body.strip()
+
 matches = []
 for path in paths:
     try:
@@ -116,6 +125,10 @@ for path in paths:
     except yaml.YAMLError:
         continue
 
+    # Resolve blurb: prefer body (v1.3+ schema), fall back to frontmatter (pre-migration)
+    blurb = extract_blurb(m.group(2)) or (fm.get("blurb") or "")
+    fm["blurb"] = blurb
+
     coll = os.path.basename(os.path.dirname(path))
     if args.collection and coll != args.collection:
         continue
@@ -128,7 +141,7 @@ for path in paths:
         continue
 
     if search_lower:
-        hay = ((fm.get("title") or "") + " " + (fm.get("blurb") or "")).lower()
+        hay = ((fm.get("title") or "") + " " + blurb).lower()
         if search_lower not in hay:
             continue
 
@@ -194,7 +207,7 @@ rm -f "$candidates"
 ## 4. Notes
 
 - **AND semantics**: every flag must match. `--tag dev-tools --tag cli` requires both tags; `--tag dev-tools --collection gaming` requires both.
-- **Search scope**: `title` + `blurb` only. URL is not searched (use `rg` directly for URL substring search). Body is empty by design.
+- **Search scope**: `title` + `blurb` only. URL is not searched (use `rg` directly for URL substring search). The blurb lives in the body (above the `<!-- /llm-managed -->` marker) under the v1.3+ schema; pre-migration files with `blurb:` in frontmatter still work via fallback.
 - **Sort stability**: ISO-8601 timestamps lex-sort correctly, so a string compare on `captured` / `enriched` matches chronological order.
 - **No `--offset` / `--page`**: deferred until needed; `--limit` is the only pagination knob.
 - **System dirs**: `_inbox/`, `_failed/`, `_trash/`, `_broken/`, `_proposals/`, `outputs/` are excluded by the `*/_*` glob plus the explicit `outputs/` predicate. Confirm whenever a new system dir is added to the vault contract.

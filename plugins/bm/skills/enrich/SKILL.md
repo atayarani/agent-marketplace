@@ -44,7 +44,7 @@ From `$ARGUMENTS`:
 - `--failed` — also include `_failed/fetch/*.md` and `_failed/llm/*.md` in the queue.
 - `--dry-run` — print what would happen; no writes, no moves, no deletes. Implies `--no-prompt`.
 - `--no-prompt` — skip the interactive "create new collection?" prompt in step 5.f. Bookmarks with brand-new `proposed_collection` are filed to the under-protest existing collection with `needs_review: true` (pre-v0.3.0 behavior). Use for batch imports (`/bm:import`) where stopping for prompts would be tedious.
-- `--force` — accepted, no-op in v1.
+- `--force` — skip the URL dedup check in step 5.a. Normally a queued file whose URL already matches a filed bookmark is treated as a half-filed leftover and removed; with `--force`, the file enters the pipeline anyway and the resulting filed bookmark may overwrite an existing one (the slug-collision suffix in 5.h kicks in if titles differ). Useful for re-enriching a previously-filed bookmark with updated `tags.yaml` or collection vocabulary.
 - `--commit` — boolean flag (default false). After a clean run, auto-commit the touched files with a templated message (see section 7). Refuses to commit if the vault has pre-existing staged changes. Push is left to the user.
 
 ## 3. Build the queue
@@ -110,14 +110,27 @@ Dedup the list at the end (it's used only as a set of `git add` paths in step 7)
 
 Ctrl-C safety: covers the case where a previous run wrote the filed bookmark but didn't reach the inbox-delete step.
 
+**Skip this entire step when `--force` is set** — `--force` is the user opting into re-enrichment of an already-filed bookmark. Print one line to stderr so the action is visible (`forcing re-enrichment of <url> (existing: <hit>)` when there's a hit, or `--force set; skipping dedup check for <url>` when there isn't) and fall through to 5.b.
+
 ```bash
-url=$(grep -m1 '^url: ' "$inbox_file" | sed 's/^url: //; s/^[[:space:]]*//; s/[[:space:]]*$//')
-hit=$(rg -Fx -l "url: $url" "$vault" --type md \
-  --glob '!_inbox/**' --glob '!_failed/**' --glob '!_trash/**' --glob '!_broken/**' \
-  2>/dev/null | head -1 || true)
+if [ "$force_flag" = "true" ]; then
+  url=$(grep -m1 '^url: ' "$inbox_file" | sed 's/^url: //; s/^[[:space:]]*//; s/[[:space:]]*$//')
+  existing=$(rg -Fx -l "url: $url" "$vault" --type md \
+    --glob '!_inbox/**' --glob '!_failed/**' --glob '!_trash/**' --glob '!_broken/**' \
+    2>/dev/null | head -1 || true)
+  if [ -n "$existing" ]; then
+    echo "--force: re-enriching $url (existing filed copy at $existing — may be overwritten in step 5.j)" >&2
+  fi
+  # do NOT continue — fall through to fetch + enrich
+else
+  url=$(grep -m1 '^url: ' "$inbox_file" | sed 's/^url: //; s/^[[:space:]]*//; s/[[:space:]]*$//')
+  hit=$(rg -Fx -l "url: $url" "$vault" --type md \
+    --glob '!_inbox/**' --glob '!_failed/**' --glob '!_trash/**' --glob '!_broken/**' \
+    2>/dev/null | head -1 || true)
+fi
 ```
 
-If `$hit` is non-empty:
+If `$hit` is non-empty (and `--force` is not set):
 - `--dry-run`: print `would remove duplicate: $inbox_file (already filed at $hit)`.
 - Otherwise: `rm "$inbox_file"`, print `already filed: $hit — removed duplicate $inbox_file`.
 - Continue to next file. (Don't count toward `filed`.)
@@ -307,6 +320,8 @@ Then extract fields from `$parsed` (via `python3 -c` or `jq`):
 - `collection`, `title`, `blurb`, `tags`, `proposed_tags`, `proposed_collection`, `confidence`.
 - Optional: `author`, `published`.
 
+Note: `blurb` is still returned by the enricher as a JSON field; the skill writes it to the **body** of the filed bookmark (not frontmatter) per the v1.3 schema. See step 5.j.
+
 ### 5.e — Defer when collection is null
 
 If `parsed.collection` is `null`:
@@ -399,13 +414,14 @@ If `dry_run == true`:
 
 ### 5.j — Write the filed bookmark
 
-Write the target file with frontmatter in this exact order. Body is **empty** (user notes area; agents never write here).
+Write the target file with frontmatter in this exact order. **The blurb lives in the body, not in frontmatter** (this is the v1.3 schema; see "Body convention" below).
+
+Frontmatter (no `blurb:` field):
 
 ```yaml
 ---
 url: <url from $extract_out>
 title: <parsed.title>
-blurb: <parsed.blurb>
 tags: [<parsed.tags joined with ", ">]
 captured: <carried from $inbox_file's frontmatter>
 enriched: <date -Iseconds>
@@ -436,26 +452,60 @@ proposed_collection:
 ```
 (if non-null)
 
-Close with `---` then `\n` (blank line). No body content.
+Close frontmatter with `---`, then write the **body**:
 
-Use a heredoc to preserve formatting:
+```
+<blank line>
+<parsed.blurb verbatim — one or two factual sentences>
+<blank line>
+<!-- /llm-managed -->
+<blank line>
+<preserved user notes, if any — see "Body convention" below>
+```
+
+**Body convention:**
+
+- The blurb is **above** the marker `<!-- /llm-managed -->`. Agents (this skill, `/bm:review --refetch`, `/bm:enrich --force`) replace everything from frontmatter-close to the marker on re-write.
+- Anything **below** the marker is user notes. Agents never touch it. On `--force` re-enrichment of an existing filed bookmark, the user-notes region must be preserved verbatim.
+- A bookmark that's never been hand-edited has an empty user-notes region — just the marker followed by a trailing newline.
+- The marker is an HTML comment, so it renders to nothing in Markdown previewers but is greppable and unambiguous.
+
+When **filing for the first time** (no existing target at `$target`), there are no user notes to preserve; emit a fresh body. When **overwriting an existing filed bookmark** (only possible under `--force`), extract the existing user-notes region first and append it to the new body.
+
+Use a Python helper to write atomically — bash heredocs can mangle blurbs containing `$`, backticks, or multi-line content:
 
 ```bash
-cat > "$target" <<EOF
----
-url: $url
-title: $title
-blurb: $blurb
-tags: [$(printf '%s, ' "${tags[@]}" | sed 's/, $//')]
-captured: $captured
-enriched: $(date -Iseconds)
-status: active
-source: $source
-...
----
+uv run --quiet --with pyyaml --no-project -- python3 - <<'PYEOF'
+import os, sys, re
+from pathlib import Path
 
-EOF
+target = Path(os.environ["TARGET_PATH"])
+blurb = os.environ.get("BLURB", "").strip()
+existing_user_notes = ""
+
+MARKER = "<!-- /llm-managed -->"
+
+# Preserve user notes when overwriting an existing target (--force path)
+if target.exists():
+    old = target.read_text(encoding="utf-8")
+    m = re.match(r"^---\n(.*?\n)---\n(.*)", old, re.DOTALL)
+    if m and MARKER in m.group(2):
+        _, _, user_part = m.group(2).partition(MARKER)
+        existing_user_notes = user_part.lstrip("\n").rstrip() + "\n" if user_part.strip() else ""
+
+# (Frontmatter built earlier in the bash, passed via $FRONTMATTER env var)
+frontmatter = os.environ["FRONTMATTER"]
+
+body_parts = [blurb, MARKER]
+out = f"---\n{frontmatter}---\n\n" + "\n\n".join(body_parts) + "\n"
+if existing_user_notes:
+    out += "\n" + existing_user_notes
+
+target.write_text(out, encoding="utf-8")
+PYEOF
 ```
+
+The bash that wraps this exports `TARGET_PATH`, `BLURB`, and `FRONTMATTER` (the YAML between `---` markers, NOT including the markers themselves, with a trailing newline).
 
 `filed=$((filed+1))`. If `$needs_review`: `needs_review_count=$((needs_review_count+1))`.
 
