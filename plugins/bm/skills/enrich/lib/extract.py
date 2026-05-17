@@ -8,22 +8,24 @@
 # ///
 """Fetch a URL from an inbox file and emit extracted page metadata as JSON.
 
-Reads the `url` field from the inbox file's frontmatter, fetches the page
-(15s timeout, follows redirects, retries once on transient), parses the HTML
-with BeautifulSoup, and prints one JSON record to stdout.
+Reads the `url` field (and optional `web_search` boolean) from the inbox
+file's frontmatter, fetches the page (15s timeout, follows redirects, retries
+once on transient), parses the HTML with BeautifulSoup, and prints one JSON
+record to stdout.
 
 Usage:  extract.py <inbox-file>
 
-Output schema (always all seven keys; null/empty for absent values):
+Output schema (always all eight keys; null/empty for absent values):
   {
-    "url":               "https://...",
-    "fetch_status":      200,
-    "title":             "..." | null,
-    "meta_description":  "..." | null,
-    "og":                {"title": "...", "description": "...",
-                          "site_name": "...", "type": "..."},
-    "json_ld":           <parsed JSON> | null,
-    "body_text_excerpt": "..."       # first 4096 chars of body get_text
+    "url":                  "https://...",
+    "fetch_status":         200,
+    "title":                "..." | null,
+    "meta_description":     "..." | null,
+    "og":                   {"title": "...", "description": "...",
+                              "site_name": "...", "type": "..."},
+    "json_ld":              <parsed JSON> | null,
+    "body_text_excerpt":    "...",     # first 4096 chars of body get_text
+    "web_search_override":  true | false | null   # from `web_search` fm key
   }
 
 On fetch failure (timeout, non-2xx after one retry), an informative error is
@@ -55,7 +57,13 @@ def die(msg: str, code: int = 1) -> NoReturn:
     sys.exit(code)
 
 
-def read_url_from_frontmatter(path: Path) -> str:
+def read_frontmatter(path: Path) -> dict[str, Any]:
+    """Parse inbox file frontmatter.
+
+    Returns {"url": str, "web_search_override": bool | None}. `url` is required;
+    `web_search_override` reflects the optional `web_search: true|false`
+    frontmatter key (None when absent).
+    """
     try:
         content = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -69,7 +77,11 @@ def read_url_from_frontmatter(path: Path) -> str:
     um = re.search(r"^url:\s*(\S.*?)\s*$", fm, re.MULTILINE)
     if not um:
         die(f"no url field in frontmatter: {path}")
-    return um.group(1).strip()
+    wm = re.search(r"^web_search:\s*(true|false)\s*$", fm, re.MULTILINE | re.IGNORECASE)
+    override: bool | None = None
+    if wm:
+        override = wm.group(1).lower() == "true"
+    return {"url": um.group(1).strip(), "web_search_override": override}
 
 
 def fetch(url: str) -> httpx.Response:
@@ -156,7 +168,8 @@ def main() -> int:
     if len(sys.argv) != 2:
         die("usage: extract.py <inbox-file>", code=2)
     path = Path(sys.argv[1])
-    url = read_url_from_frontmatter(path)
+    fm = read_frontmatter(path)
+    url = fm["url"]
     resp = fetch(url)
     soup = BeautifulSoup(get_html_text(resp), "html.parser")
     out = {
@@ -167,6 +180,7 @@ def main() -> int:
         "og": extract_og(soup),
         "json_ld": extract_json_ld(soup),
         "body_text_excerpt": extract_body_excerpt(soup),
+        "web_search_override": fm["web_search_override"],
     }
     json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")

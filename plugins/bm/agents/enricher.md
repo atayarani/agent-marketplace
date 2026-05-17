@@ -12,13 +12,15 @@ You are the per-bookmark enrichment assistant for the `bm` bookmark vault. You h
 The parent (`/bm:enrich`) gives you, in one prompt:
 
 1. **Page extract** — the JSON output of `extract.py`:
-   `{url, fetch_status, title, meta_description, og, json_ld, body_text_excerpt}`. Some keys may be null or empty when the page is thin (paywall, JS-only, bot-blocked).
+   `{url, fetch_status, title, meta_description, og, json_ld, body_text_excerpt, web_search_override}`. Some keys may be null or empty when the page is thin (paywall, JS-only, bot-blocked). `web_search_override` is routing metadata for the parent skill (you can ignore it).
 
 2. **`tags.yaml`** — the controlled tag vocabulary. Each entry has `name` (kebab-case canonical), `description` (one line used to judge fit), `aliases` (synonyms to redirect to `name`). May be `tags: []` in bootstrap state.
 
 3. **Collection list** — for each existing collection directory in the vault, the dir name plus the first non-empty line of its `README.md` (the boundary description). May be empty in bootstrap state.
 
 4. **Optional Raindrop hints** — `imported_tags` and/or `imported_collection`, present only when the bookmark came from a Raindrop import (Phase 1.D).
+
+5. **Optional `web_search_context`** — for URLs whose host the user has marked as benefiting from search (or that explicitly opted in via `web_search: true` frontmatter), the parent fetches snippets from a web search engine describing the URL. The JSON shape is `{url, snippets: [...], backend}`. Treat as a noisier signal than direct page content: useful for getting a topical hook, but verify against `meta_description` / `og.description` / `body_text_excerpt` before trusting. Snippets are third-party; they may describe what the URL *was*, not what it is now.
 
 If a required input is missing from the parent's prompt, set `confidence: 0` and use the `blurb` to say what was missing — do not invent.
 
@@ -67,6 +69,7 @@ All seven keys must be present. Use `[]` for empty lists and `null` (not omissio
 - `body_text_excerpt` is the first 4096 chars of `<body>.get_text()`. Sites with heavy chrome (GitHub, news sites) bury the real content 1000-2000 chars in behind nav menus, headers, search bars. Skim past chrome to the page content. `meta_description` and `og.description` are often cleaner signal than the body for those sites.
 - `json_ld` (when present) typically has the highest-quality structured data: `@type`, `headline`, `author`, `datePublished`, `description`. Trust it over free-text body for entity facts.
 - `fetch_status` is always 2xx if you're seeing this — fetch failures route to `_failed/fetch/` before reaching you.
+- `web_search_context.snippets` (when present): up to 5 search-result excerpts about this URL. Use to supplement a sparse page extract, especially when `body_text_excerpt` is title-only. The blurb you write should still be grounded in what the URL is — search snippets can describe the page, but they're not the page itself.
 
 ## Do not
 

@@ -136,6 +136,80 @@ On `rc != 0`:
 
 - `fetch_failed=$((fetch_failed+1))`. Continue.
 
+### 5.b.w — Web search context (Phase 2.D)
+
+After a successful fetch + extract, decide whether to enrich the enricher's input with third-party search snippets. This is the **security-gated** path — URLs are not transmitted to Tavily unless the host has been explicitly allowlisted in `$vault/web_search_allowlist.yaml` (or `web_search: true` is set in the bookmark frontmatter).
+
+Trigger rule:
+
+```
+override = extract_out.web_search_override   # true / false / null
+host     = lowercased hostname of extract_out.url (with `www.` stripped)
+
+if override is True:           run web search
+elif override is False:        skip web search
+elif host in allowlist:        run web search
+else:                          skip web search
+```
+
+```bash
+allowlist_file="$vault/web_search_allowlist.yaml"
+web_search_context=""
+
+decision=$(printf '%s' "$extract_out" | python3 -c '
+import json, re, sys, urllib.parse
+from pathlib import Path
+
+extract = json.loads(sys.stdin.read())
+override = extract.get("web_search_override")
+url = extract.get("url", "")
+host = (urllib.parse.urlparse(url).hostname or "").lower()
+if host.startswith("www."):
+    host = host[4:]
+
+allowlist_path = sys.argv[1] if len(sys.argv) > 1 else ""
+allow: set[str] = set()
+if allowlist_path and Path(allowlist_path).exists():
+    for line in Path(allowlist_path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^-\s+(.+)$", line)
+        if m:
+            allow.add(m.group(1).strip().strip("\"\x27").lower())
+
+if override is True:
+    print("run")
+elif override is False:
+    print("skip")
+elif host and host in allow:
+    print("run")
+else:
+    print("skip")
+' "$allowlist_file" 2>/dev/null)
+
+if [ "$decision" = "run" ]; then
+  if [ -n "$TAVILY_API_KEY" ]; then
+    ws_stderr=$(mktemp)
+    web_search_context=$("${CLAUDE_PLUGIN_ROOT:-.}/skills/enrich/lib/web_search.py" "$url" 2>"$ws_stderr")
+    ws_rc=$?
+    if [ $ws_rc -ne 0 ]; then
+      echo "warning: web search failed for $url: $(cat $ws_stderr)" >&2
+      web_search_context=""
+    fi
+    rm -f "$ws_stderr"
+  else
+    echo "web search skipped for $url: TAVILY_API_KEY unset" >&2
+  fi
+fi
+```
+
+Failure modes — none crash the enrich loop:
+- Missing allowlist file → treated as empty list; only `web_search: true` overrides trigger a search.
+- `TAVILY_API_KEY` unset on a run-decision URL → one-line stderr note; `$web_search_context` stays empty.
+- `web_search.py` non-zero exit (HTTP error, 401, rate limit, network) → stderr warning; `$web_search_context` stays empty.
+- Empty `snippets: []` from a successful call → `$web_search_context` is the JSON `{"url": ..., "snippets": [], "backend": "tavily"}`; step 5.c still injects it (the enricher prompt mentions the field may be empty).
+
 ### 5.c — Spawn `bm:enricher`
 
 Use the Agent tool with `subagent_type: "bm:enricher"`. Pass a single prompt containing:
@@ -144,6 +218,7 @@ Use the Agent tool with `subagent_type: "bm:enricher"`. Pass a single prompt con
 2. The `tags.yaml` contents from step 4.a.
 3. The collection list from step 4.b (or the literal `(none — vault has no collections yet)` in bootstrap mode).
 4. Any `imported_tags` / `imported_collection` from `$inbox_file`'s frontmatter (typically only present for Raindrop imports).
+5. The web search snippets JSON from step 5.b.w (`$web_search_context`) — **omit this section entirely when `$web_search_context` is empty**.
 
 Prompt template:
 
@@ -162,6 +237,12 @@ Process this bookmark and return strict JSON per your system prompt schema.
 
 ## Collection list
 <paste $collection_list>
+
+## Web search context (third-party snippets for this URL — only present when allowlist matched or `web_search: true` opted in)
+```json
+<paste $web_search_context>
+```
+<OR omit this entire section when $web_search_context is empty>
 
 ## Imported hints (from inbox frontmatter — if present)
 <imported_tags: …, imported_collection: …, OR omit this section if absent>
