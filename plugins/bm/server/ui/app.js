@@ -229,6 +229,7 @@
       <span>${escapeHTML(captured)}</span>
     </div>
   </div>
+  <button class="bm-delete" data-path="${escapeHTML(b.path || '')}" title="Move to _trash" aria-label="Move to _trash">×</button>
 </article>`;
     }).join("");
     els.list.innerHTML = html;
@@ -401,8 +402,47 @@
     renderViz();
   });
 
-  // Delegate tag-chip + size-row + coll-meta clicks throughout the document
+  async function handleDelete(path) {
+    if (!path) return;
+    const bm = state.data && state.data.bookmarks.find((x) => x.path === path);
+    const label = bm ? (bm.title || bm.url) : path;
+    if (!confirm(`Move to _trash?\n\n${label}`)) return;
+    try {
+      const res = await fetch("/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // Optimistic local state update — avoids a full /bookmarks.json refetch
+      if (state.data) {
+        state.data.bookmarks = state.data.bookmarks.filter((x) => x.path !== path);
+        if (bm) {
+          state.data.totals.bookmarks = Math.max(0, state.data.totals.bookmarks - 1);
+          if (bm.kind === "inbox") {
+            state.data.totals.inbox = Math.max(0, (state.data.totals.inbox || 0) - 1);
+          } else {
+            state.data.totals.filed = Math.max(0, (state.data.totals.filed || 0) - 1);
+          }
+          const coll = state.data.collections.find((c) => c.name === bm.collection);
+          if (coll) coll.count = Math.max(0, coll.count - 1);
+        }
+        render();
+      }
+    } catch (e) {
+      alert(`Delete failed: ${e.message}`);
+    }
+  }
+
+  // Delegate tag-chip + size-row + coll-meta + delete clicks
   document.addEventListener("click", (e) => {
+    const delEl = e.target.closest(".bm-delete");
+    if (delEl) {
+      e.preventDefault();
+      handleDelete(delEl.dataset.path);
+      return;
+    }
     const tagEl = e.target.closest("[data-tag]");
     if (tagEl) {
       const t = tagEl.dataset.tag;

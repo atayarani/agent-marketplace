@@ -437,17 +437,73 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if urllib.parse.urlparse(self.path).path != "/add":
-            return self._json(404, {"error": "not found"})
+        route = urllib.parse.urlparse(self.path).path
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
         try:
-            payload = json.loads(raw.decode("utf-8") or "{}")
+            payload = json.loads(raw.decode("utf-8") or "{}") if raw else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
             return self._json(400, {"error": "invalid json body"})
-        url = (payload.get("url") or "").strip()
-        title = (payload.get("title") or "").strip() or None
-        return self._handle_add(url, title, html_response=False)
+        if route == "/add":
+            url = (payload.get("url") or "").strip()
+            title = (payload.get("title") or "").strip() or None
+            return self._handle_add(url, title, html_response=False)
+        if route == "/delete":
+            return self._handle_delete(payload)
+        return self._json(404, {"error": "not found"})
+
+    def _handle_delete(self, payload: dict) -> None:
+        """Soft-delete a bookmark by moving its file to `_trash/`.
+
+        Body: {"path": "<vault-relative path>"}. Path must resolve inside the
+        vault, be an existing .md file, and not already be under `_trash/`.
+        Uses `git mv` when the vault is a git repo, falls back to Path.rename.
+        Collisions in `_trash/` get a timestamp suffix.
+        """
+        rel = (payload.get("path") or "").strip()
+        if not rel:
+            return self._json(400, {"error": "missing path"})
+        # Resolve and validate
+        try:
+            src = (VAULT / rel).resolve()
+            src.relative_to(VAULT)
+        except (ValueError, OSError):
+            return self._json(400, {"error": "path escapes vault"})
+        if not src.exists():
+            return self._json(404, {"error": "file not found"})
+        if not src.is_file() or src.suffix != ".md":
+            return self._json(400, {"error": "not a markdown file"})
+        rel_parts = src.relative_to(VAULT).parts
+        if rel_parts and rel_parts[0] == "_trash":
+            return self._json(400, {"error": "already in _trash"})
+        # Compute destination (with timestamp suffix on collision)
+        trash = VAULT / "_trash"
+        trash.mkdir(exist_ok=True)
+        dst = trash / src.name
+        if dst.exists():
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            dst = trash / f"{src.stem}-{ts}{src.suffix}"
+            n = 1
+            while dst.exists():
+                n += 1
+                dst = trash / f"{src.stem}-{ts}-{n}{src.suffix}"
+        # git mv with plain-rename fallback
+        try:
+            src_rel = src.relative_to(VAULT)
+            dst_rel = dst.relative_to(VAULT)
+            subprocess.run(
+                ["git", "-C", str(VAULT), "mv", str(src_rel), str(dst_rel)],
+                check=True, capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            try:
+                src.rename(dst)
+            except OSError as e:
+                log(f"POST /delete 500 {rel} ({e})")
+                return self._json(500, {"error": str(e)})
+        new_rel = str(dst.relative_to(VAULT))
+        log(f"POST /delete 200 {rel} -> {new_rel}")
+        return self._json(200, {"ok": True, "new_path": new_rel})
 
     def _handle_add(self, url: str, title: str | None, *, html_response: bool) -> None:
         if not URL_RE.match(url):
