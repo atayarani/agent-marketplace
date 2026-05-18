@@ -196,7 +196,10 @@
     const n = filteredBookmarks().length;
     const total = state.data.bookmarks.length;
     const scope = state.selectedCollection ? ` in ${state.selectedCollection}/` : "";
-    els.activeFilters.innerHTML = `<span>${n} of ${total}${scope}</span>` + chips.join("");
+    const emptyTrashBtn = state.selectedCollection === "_trash" && (state.data.totals.trashed || 0) > 0
+      ? `<button id="empty-trash-btn" class="danger-btn" title="Permanently delete all items in _trash">Empty trash (${state.data.totals.trashed})</button>`
+      : "";
+    els.activeFilters.innerHTML = `<span>${n} of ${total}${scope}</span>` + chips.join("") + emptyTrashBtn;
   }
 
   function renderList() {
@@ -478,6 +481,27 @@
     }
   }
 
+  async function handleEmptyTrash() {
+    const n = (state.data && state.data.totals.trashed) || 0;
+    if (n === 0) return;
+    if (!confirm(`Permanently delete ${n} item${n === 1 ? "" : "s"} in _trash?\n\nThis removes the files from the working tree. Git history still preserves anything that was previously committed.`)) return;
+    try {
+      const res = await fetch("/empty-trash", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (data.errors && data.errors.length) {
+        alert(`Deleted ${data.deleted} item(s); ${data.errors.length} failed.\nFirst error: ${data.errors[0].error}`);
+      }
+      await loadData();
+    } catch (e) {
+      alert(`Empty trash failed: ${e.message}`);
+    }
+  }
+
   // Delegate tag-chip + size-row + coll-meta + delete/restore clicks
   document.addEventListener("click", (e) => {
     const delEl = e.target.closest(".bm-delete");
@@ -516,6 +540,11 @@
   });
 
   els.activeFilters.addEventListener("click", (e) => {
+    if (e.target.closest("#empty-trash-btn")) {
+      e.preventDefault();
+      handleEmptyTrash();
+      return;
+    }
     const clear = e.target.closest("[data-clear]");
     if (clear) {
       state.search = "";

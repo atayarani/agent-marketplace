@@ -279,6 +279,24 @@ main {
 
 .active-filters .filter-chip::after { content: "×"; opacity: 0.6; font-size: 13px; }
 
+.active-filters .danger-btn {
+  margin-left: auto;   /* push to right of the bar */
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--ctp-red);
+  color: var(--ctp-red);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.active-filters .danger-btn:hover {
+  background: var(--ctp-red);
+  color: var(--ctp-base);
+}
+
 .viz-pane {
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);

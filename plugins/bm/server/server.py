@@ -556,6 +556,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_delete(payload)
         if route == "/restore":
             return self._handle_restore(payload)
+        if route == "/empty-trash":
+            return self._handle_empty_trash(payload)
         return self._json(404, {"error": "not found"})
 
     def _handle_delete(self, payload: dict) -> None:
@@ -664,6 +666,38 @@ class Handler(BaseHTTPRequestHandler):
         new_rel = str(dst.relative_to(VAULT))
         log(f"POST /restore 200 {rel} -> {new_rel}")
         return self._json(200, {"ok": True, "new_path": new_rel})
+
+    def _handle_empty_trash(self, payload: dict) -> None:
+        """Permanently delete every `.md` file in `_trash/`.
+
+        Uses `git rm` when the file is tracked, falls back to plain `unlink`.
+        Either way, the working-tree file is gone. Git history still preserves
+        the content for any previously-committed file; the user can `git add -u
+        && git commit` if they want the deletion reflected in vault history.
+
+        Body: {} (no payload). Returns {ok, deleted, errors}.
+        """
+        trash = VAULT / "_trash"
+        if not trash.is_dir():
+            return self._json(200, {"ok": True, "deleted": 0, "errors": []})
+        deleted = 0
+        errors: list[dict] = []
+        for p in sorted(trash.glob("*.md")):
+            rel = str(p.relative_to(VAULT))
+            try:
+                # Try git rm first (stages the deletion). Fall back to unlink.
+                try:
+                    subprocess.run(
+                        ["git", "-C", str(VAULT), "rm", "--quiet", "--force", rel],
+                        check=True, capture_output=True,
+                    )
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    p.unlink()
+                deleted += 1
+            except OSError as e:
+                errors.append({"path": rel, "error": str(e)})
+        log(f"POST /empty-trash 200 deleted={deleted} errors={len(errors)}")
+        return self._json(200, {"ok": True, "deleted": deleted, "errors": errors})
 
     def _handle_add(self, url: str, title: str | None, *, html_response: bool) -> None:
         if not URL_RE.match(url):
