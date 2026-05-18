@@ -186,13 +186,28 @@ def _extract_blurb(body: str) -> str:
     return body.strip()
 
 
+def _host_from_url(url: str) -> str:
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def _collect_vault_data(vault: Path) -> dict:
     """Walk the vault, return the JSON shape consumed by the UI.
 
     Includes filed bookmarks (user collections + `_unsorted/` + `_broken/`)
-    with normalized frontmatter; aggregates for tags, hosts, and per-collection
-    counts. Sorted: collections by count desc with system dirs at the end;
-    tags and hosts by count desc.
+    and inbox files (`_inbox/`). Each bookmark carries `kind: "filed"` or
+    `kind: "inbox"`. Inbox files have empty `blurb`/`enriched`/`status` and
+    fall back to `imported_tags` for tags, URL path for title when missing.
+
+    Aggregates:
+      - `tags`: canonical vocabulary (filed bookmarks only).
+      - `hosts`: all bookmarks (filed + inbox).
+      - `collections`: user dirs + `_unsorted` + `_broken` + `_inbox` (system).
     """
     user_collections: list[Path] = []
     system_collections: list[Path] = []
@@ -212,50 +227,91 @@ def _collect_vault_data(vault: Path) -> dict:
 
     bookmarks: list[dict] = []
     coll_counts: dict[str, int] = {}
-    tag_counter: Counter = Counter()
-    host_counter: Counter = Counter()
+    tag_counter: Counter = Counter()       # canonical tags (filed only)
+    host_counter: Counter = Counter()      # all bookmarks
+
+    def append_filed(p: Path, coll_name: str) -> bool:
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        fm, body = _parse_frontmatter_block(text)
+        if not fm:
+            return False
+        url = fm.get("url") or ""
+        host = _host_from_url(url)
+        tags = [str(t) for t in (fm.get("tags") or []) if t]
+        bookmarks.append({
+            "kind": "filed",
+            "url": url,
+            "title": fm.get("title") or "",
+            "blurb": _extract_blurb(body) or fm.get("blurb") or "",
+            "tags": tags,
+            "collection": coll_name,
+            "captured": fm.get("captured") or "",
+            "enriched": fm.get("enriched") or "",
+            "status": fm.get("status") or "active",
+            "source": fm.get("source") or "",
+            "host": host,
+            "needs_review": str(fm.get("needs_review", "")).lower() == "true",
+            "path": str(p.relative_to(vault)),
+        })
+        tag_counter.update(tags)
+        if host:
+            host_counter[host] += 1
+        return True
+
+    def append_inbox(p: Path) -> bool:
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        fm, _ = _parse_frontmatter_block(text)
+        if not fm:
+            return False
+        url = fm.get("url") or ""
+        if not url:
+            return False
+        host = _host_from_url(url)
+        # Inbox has imported_tags (from Raindrop) but no canonical tags yet.
+        imported_tags = [str(t) for t in (fm.get("imported_tags") or []) if t]
+        bookmarks.append({
+            "kind": "inbox",
+            "url": url,
+            "title": fm.get("title") or "",  # bookmarklet captures may have one; imports won't
+            "blurb": "",
+            "tags": imported_tags,            # surface imported_tags as the tag list for filtering
+            "collection": "_inbox",
+            "captured": fm.get("captured") or "",
+            "enriched": "",
+            "status": "pending",
+            "source": fm.get("source") or "",
+            "host": host,
+            "needs_review": False,
+            "imported_collection": fm.get("imported_collection") or "",
+            "path": str(p.relative_to(vault)),
+        })
+        if host:
+            host_counter[host] += 1
+        return True
 
     for coll in user_collections + system_collections:
         count = 0
         for p in sorted(coll.glob("*.md")):
             if p.name == "README.md":
                 continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            fm, body = _parse_frontmatter_block(text)
-            if not fm:
-                continue
-            blurb = _extract_blurb(body) or fm.get("blurb") or ""
-            tags_raw = fm.get("tags") or []
-            tags = [str(t) for t in tags_raw if t]
-            url = fm.get("url") or ""
-            host = ""
-            try:
-                host = urllib.parse.urlparse(url).hostname or ""
-                if host.startswith("www."):
-                    host = host[4:]
-            except ValueError:
-                host = ""
-            bookmarks.append({
-                "url": url,
-                "title": fm.get("title") or "",
-                "blurb": blurb,
-                "tags": tags,
-                "collection": coll.name,
-                "captured": fm.get("captured") or "",
-                "enriched": fm.get("enriched") or "",
-                "status": fm.get("status") or "active",
-                "host": host,
-                "needs_review": str(fm.get("needs_review", "")).lower() == "true",
-                "path": str(p.relative_to(vault)),
-            })
-            count += 1
-            tag_counter.update(tags)
-            if host:
-                host_counter[host] += 1
+            if append_filed(p, coll.name):
+                count += 1
         coll_counts[coll.name] = count
+
+    inbox_dir = vault / "_inbox"
+    inbox_count = 0
+    if inbox_dir.is_dir():
+        for p in sorted(inbox_dir.glob("*.md")):
+            if p.name == ".gitkeep":
+                continue
+            if append_inbox(p):
+                inbox_count += 1
 
     collections_out = [
         {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "user"}
@@ -266,12 +322,15 @@ def _collect_vault_data(vault: Path) -> dict:
         {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "system"}
         for c in system_collections
     )
+    collections_out.append({"name": "_inbox", "count": inbox_count, "kind": "system"})
 
     return {
         "vault": str(vault),
         "generated_at": iso_now(),
         "totals": {
             "bookmarks": len(bookmarks),
+            "filed": len(bookmarks) - inbox_count,
+            "inbox": inbox_count,
             "collections": len(user_collections),
             "tags": len(tag_counter),
             "hosts": len(host_counter),

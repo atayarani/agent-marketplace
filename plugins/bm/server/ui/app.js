@@ -70,7 +70,9 @@
     return state.data.bookmarks.filter((b) => {
       if (coll && b.collection !== coll) return false;
       if (search) {
-        const hay = (b.title + " " + b.blurb).toLowerCase();
+        // Title + blurb + URL — URL is critical for inbox items that haven't
+        // been enriched yet (often empty title/blurb).
+        const hay = (b.title + " " + b.blurb + " " + b.url).toLowerCase();
         if (!hay.includes(search)) return false;
       }
       if (tagFilter.size > 0) {
@@ -84,8 +86,9 @@
 
   function renderTotals() {
     const t = state.data.totals;
+    const inboxLine = t.inbox ? `<span>${t.filed} filed · ${t.inbox} inbox</span>` : `<span>${t.bookmarks} bookmarks</span>`;
     els.totals.innerHTML =
-      `<span>${t.bookmarks} bookmarks</span>` +
+      inboxLine +
       `<span>${t.collections} collections</span>` +
       `<span>${t.tags} tags</span>` +
       `<span>${t.hosts} hosts</span>`;
@@ -111,7 +114,9 @@
     if (sysColls.length) {
       parts.push(`<div class="group-label">System</div>`);
       sysColls.forEach((c) => {
-        const klass = `system${c.name === "_broken" ? " broken" : ""}`;
+        let klass = "system";
+        if (c.name === "_broken") klass += " broken";
+        if (c.name === "_inbox") klass += " inbox";
         parts.push(link(c.name, c.count, klass));
       });
     }
@@ -141,22 +146,33 @@
     // Sort by captured desc
     items.sort((a, b) => (b.captured || "").localeCompare(a.captured || ""));
     const html = items.map((b) => {
-      const tags = b.tags.map((t) =>
+      const tags = (b.tags || []).map((t) =>
         `<a class="tag-chip${state.selectedTags.has(t) ? " selected" : ""}" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</a>`
       ).join(" ");
+      const isInbox = b.kind === "inbox";
+      const inboxBadge = isInbox
+        ? `<span class="badge-pending" title="awaiting /bm:enrich">pending${b.source ? " · " + escapeHTML(b.source) : ""}</span>`
+        : "";
+      const importedColl = isInbox && b.imported_collection
+        ? `<span class="imported-coll" title="proposed collection from import">→ ${escapeHTML(b.imported_collection)}</span>`
+        : "";
       const needsReview = b.needs_review ? `<span class="needs-review">needs review</span>` : "";
       const statusBroken = b.status === "broken" ? `<span class="status-broken">broken</span>` : "";
       const captured = dateOnly(b.captured);
       const url = escapeHTML(b.url);
-      return `<article class="bm-card">
-  <div class="bm-title"><a href="${url}" target="_blank" rel="noopener">${escapeHTML(b.title || b.url)}</a></div>
+      // Title fallback: for inbox without a title, use URL host + path
+      const displayTitle = b.title || (isInbox ? (b.host + (b.url ? new URL(b.url).pathname.slice(0, 60) : "")) : b.url);
+      return `<article class="bm-card${isInbox ? " inbox" : ""}">
+  <div class="bm-title"><a href="${url}" target="_blank" rel="noopener">${escapeHTML(displayTitle)}</a></div>
   <div class="bm-url">${url}</div>
-  <div class="bm-blurb">${escapeHTML(b.blurb)}</div>
+  ${b.blurb ? `<div class="bm-blurb">${escapeHTML(b.blurb)}</div>` : ""}
   <div class="bm-meta">
     <span class="coll" data-coll="${escapeHTML(b.collection)}">${escapeHTML(b.collection)}/</span>
     ${tags}
+    ${importedColl}
     ${statusBroken}
     ${needsReview}
+    ${inboxBadge}
     <span>${escapeHTML(captured)}</span>
   </div>
 </article>`;
