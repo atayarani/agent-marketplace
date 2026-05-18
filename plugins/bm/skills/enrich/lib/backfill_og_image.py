@@ -52,25 +52,28 @@ def yaml_rt() -> YAML:
 
 
 def collect_filed_bookmarks(vault: Path) -> list[Path]:
+    """Every *.md file directly inside a user collection dir (any nesting
+    depth), plus `_unsorted/` and `_broken/` flat sinks."""
     out: list[Path] = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name in ("_unsorted", "_broken"):
-            for p in child.glob("*.md"):
+    for special in ("_unsorted", "_broken"):
+        d = vault / special
+        if d.is_dir():
+            for p in d.glob("*.md"):
                 if p.name != "README.md":
                     out.append(p)
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if child.name.startswith("_"):
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        if child.name == "outputs":
-            continue
-        if not (child / "README.md").exists():
-            continue
-        for p in child.glob("*.md"):
+        for p in coll.glob("*.md"):
             if p.name != "README.md":
                 out.append(p)
-    return out
+    return sorted(set(out))
 
 
 def parse_bookmark(path: Path) -> tuple[dict | None, str]:

@@ -55,17 +55,20 @@ DEFAULT_UA = (
 # ---------- vault walking ----------
 
 def list_user_collections(vault: Path) -> list[Path]:
+    """Every directory under `vault` (any depth) that contains a README.md
+    is a collection. Skip subtrees rooted at a top-level _-prefixed dir or
+    `outputs/`."""
     out = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if child.name.startswith("_"):
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        if child.name == "outputs":
-            continue
-        if not (child / "README.md").exists():
-            continue
-        out.append(child)
+        out.append(coll)
     return out
 
 

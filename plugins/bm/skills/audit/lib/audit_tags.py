@@ -57,17 +57,19 @@ def parse_frontmatter(path: Path) -> dict | None:
 
 
 def list_user_collections(vault: Path) -> list[Path]:
+    """Any directory containing a README.md is a collection, identified by
+    its path relative to vault. Recurses into nested subcollections."""
     out = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if child.name.startswith("_"):
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        if child.name == "outputs":
-            continue
-        if not (child / "README.md").exists():
-            continue
-        out.append(child)
+        out.append(coll)
     return out
 
 

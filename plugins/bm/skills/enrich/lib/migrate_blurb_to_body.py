@@ -35,23 +35,28 @@ FRONTMATTER_RE = re.compile(r"^(---\n)(.*?\n)(---\n)(.*)", re.DOTALL)
 
 
 def collect_bookmarks(vault: Path) -> list[Path]:
-    """Filed bookmarks: collections + _unsorted + _broken. Excludes README.md, .gitkeep, _inbox, _failed, _trash, _proposals."""
+    """Filed bookmarks: every *.md file directly inside a user collection
+    dir (any nesting depth), plus `_unsorted/` and `_broken/` flat sinks."""
     out: list[Path] = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
+    for special in ("_unsorted", "_broken"):
+        d = vault / special
+        if d.is_dir():
+            for p in d.glob("*.md"):
+                if p.name != "README.md":
+                    out.append(p)
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if child.name in ("_inbox", "_failed", "_trash", "_proposals", "outputs"):
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        # Include _unsorted and _broken explicitly; skip other _-prefixed system dirs
-        if child.name.startswith("_") and child.name not in ("_unsorted", "_broken"):
-            continue
-        # User collections need a README.md; _unsorted/_broken don't
-        if not child.name.startswith("_") and not (child / "README.md").exists():
-            continue
-        for p in child.glob("*.md"):
+        for p in coll.glob("*.md"):
             if p.name != "README.md":
                 out.append(p)
-    return out
+    return sorted(set(out))
 
 
 def migrate_one(text: str) -> tuple[str | None, str]:
