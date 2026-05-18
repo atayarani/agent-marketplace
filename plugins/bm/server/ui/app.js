@@ -50,16 +50,31 @@
 
   const dateOnly = (s) => (s || "").slice(0, 10);
 
-  // Favicon thumbnail via DuckDuckGo's free favicon service.
-  // Lightweight (no API key, ~few hundred bytes per icon), browser-cached.
+  // Thumbnail chain: og:image (rich, when captured during enrichment) →
+  // favicon (always works for any host) → first-letter glyph (no host at all).
+  // All sources are lazy-loaded, no-referrer, browser-cached.
   const thumbnailHTML = (b) => {
     const host = b.host;
-    if (!host) return `<div class="bm-thumb no-host" aria-hidden="true">·</div>`;
-    const src = `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico`;
-    // referrerpolicy=no-referrer + loading=lazy + onerror replace with first-letter glyph
+    const ogImage = b.og_image;
+    if (!host && !ogImage) return `<div class="bm-thumb no-host" aria-hidden="true">·</div>`;
+    const faviconSrc = host ? `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico` : "";
+    const glyph = escapeHTML((host && host[0]) || "·").toUpperCase();
+    if (ogImage) {
+      // Rich og:image — fill the tile with cover. On error, swap in favicon
+      // (and add `favicon-fallback` so CSS can downsize it to a contained icon).
+      const ogSrc = escapeHTML(ogImage);
+      const fallback = faviconSrc
+        ? `this.src='${faviconSrc}';this.classList.add('fallback');this.onerror=function(){this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';};`
+        : `this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';`;
+      return `<div class="bm-thumb rich">`
+        + `<img src="${ogSrc}" alt="" loading="lazy" referrerpolicy="no-referrer" `
+        + `onerror="${fallback}" />`
+        + `</div>`;
+    }
+    // Favicon-only path (current default for filed without og_image and all inbox)
     return `<div class="bm-thumb">`
-      + `<img src="${src}" alt="" loading="lazy" referrerpolicy="no-referrer" `
-      + `onerror="this.parentElement.classList.add('no-host');this.outerHTML='${escapeHTML(host[0] || '·').toUpperCase()}';" />`
+      + `<img src="${faviconSrc}" alt="" loading="lazy" referrerpolicy="no-referrer" `
+      + `onerror="this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';" />`
       + `</div>`;
   };
 

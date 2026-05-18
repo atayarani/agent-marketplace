@@ -326,6 +326,20 @@ main {
   background: transparent;
 }
 
+/* og:image: fill the full tile (cover-crop) so the share image is the thumbnail */
+.bm-thumb.rich img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* If og:image failed and we fell back to favicon, restore the contained look */
+.bm-thumb.rich img.fallback {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
 .bm-thumb.no-host {
   font-size: 18px;
   color: var(--ctp-overlay0);

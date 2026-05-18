@@ -174,8 +174,11 @@ def extract_og(soup: BeautifulSoup) -> dict[str, str]:
         if not content:
             continue
         key = prop[len("og:"):]
-        if key in ("title", "description", "site_name", "type") and key not in og:
+        if key in ("title", "description", "site_name", "type", "image", "image:url") and key not in og:
             og[key] = content.strip()
+    # Normalize: prefer og:image, fall back to og:image:url (some sites set only the latter)
+    if "image" not in og and "image:url" in og:
+        og["image"] = og["image:url"]
     return og
 
 

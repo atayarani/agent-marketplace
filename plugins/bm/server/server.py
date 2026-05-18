@@ -253,6 +253,7 @@ def _collect_vault_data(vault: Path) -> dict:
             "status": fm.get("status") or "active",
             "source": fm.get("source") or "",
             "host": host,
+            "og_image": fm.get("og_image") or "",
             "needs_review": str(fm.get("needs_review", "")).lower() == "true",
             "path": str(p.relative_to(vault)),
         })
@@ -287,6 +288,7 @@ def _collect_vault_data(vault: Path) -> dict:
             "status": "pending",
             "source": fm.get("source") or "",
             "host": host,
+            "og_image": "",                   # inbox hasn't been through extract.py yet
             "needs_review": False,
             "imported_collection": fm.get("imported_collection") or "",
             "path": str(p.relative_to(vault)),

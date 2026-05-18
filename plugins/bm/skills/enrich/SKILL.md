@@ -488,6 +488,11 @@ fm_lines=(
 # Conditional fields — only emit when set
 [ -n "$author" ]    && fm_lines+=("author: $author")
 [ -n "$published" ] && fm_lines+=("published: $published")
+# og_image comes from `extract.py`'s `og.image` field (the source page's
+# OpenGraph share image); used by /bm:web as a rich card thumbnail. Pull it
+# from the extract output and YAML-quote the URL so colons survive parsing.
+og_image=$(printf '%s' "$extract_out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("og") or {}).get("image") or "")')
+[ -n "$og_image" ] && fm_lines+=("og_image: \"$og_image\"")
 if [ "$needs_review" = "true" ]; then
   fm_lines+=("needs_review: true")
   fm_lines+=("confidence: $confidence")
