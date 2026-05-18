@@ -29,6 +29,12 @@ Output schema (always all nine keys; null/empty for absent values):
     "inbox_title":          "..." | null  # from inbox fm `title:` (bookmarklet captures)
   }
 
+Per-host fallbacks: when the regular fetch returns 2xx but the HTML body is
+thin (typical of anti-bot walls — IMDb name pages serve HTTP 202 with no
+parseable title), specific known-good per-host JSON endpoints are queried to
+populate `title` / `meta_description` / `og` from authoritative data. Today:
+  - IMDb `/name/nmXXXXX` → `v3.sg.media-imdb.com/suggestion/h/<nm>.json`
+
 On fetch failure (timeout, non-2xx after one retry), an informative error is
 printed to stderr and the script exits 1. Invalid invocation exits 2.
 """
@@ -190,6 +196,43 @@ def extract_body_excerpt(soup: BeautifulSoup) -> str:
     return soup.body.get_text(separator=" ", strip=True)[:EXCERPT_MAX]
 
 
+IMDB_NAME_RE = re.compile(r"^https?://(?:www\.)?imdb\.com/name/(nm\d+)", re.IGNORECASE)
+IMDB_SUGGESTION_URL = "https://v3.sg.media-imdb.com/suggestion/h/{nm}.json"
+
+
+def imdb_name_fallback(url: str) -> dict[str, str] | None:
+    """For IMDb /name/nmXXXXX pages, query the public suggestion API.
+
+    Returns {"name": "...", "role_summary": "..."} or None when the URL
+    doesn't match, the API is unreachable, or no record is found. Cheap
+    (~200ms, no auth) and exists because the IMDb HTML page bot-walls
+    extract.py with HTTP 202 + empty body.
+    """
+    m = IMDB_NAME_RE.match(url)
+    if not m:
+        return None
+    nm = m.group(1)
+    try:
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            resp = client.get(IMDB_SUGGESTION_URL.format(nm=nm))
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    arr = data.get("d", []) if isinstance(data, dict) else []
+    # Require an exact nm-id match — the suggestion API does fuzzy prefix
+    # matching and will return unrelated entries for malformed IDs.
+    match = next((x for x in arr if x.get("id") == nm), None)
+    if not match:
+        return None
+    name = (match.get("l") or "").strip()
+    role = (match.get("s") or "").strip()
+    if not name:
+        return None
+    return {"name": name, "role_summary": role}
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         die("usage: extract.py <inbox-file>", code=2)
@@ -220,12 +263,31 @@ def main() -> int:
             return 0
         die(err or f"fetch failed for {url}")
     soup = BeautifulSoup(get_html_text(resp), "html.parser")
+    title_out = extract_title(soup)
+    meta_out = extract_meta_description(soup)
+    og_out = extract_og(soup)
+
+    # Per-host fallback: IMDb name pages bot-wall the HTML fetch with HTTP 202
+    # and an empty body. Backfill from the public suggestion API when title is
+    # missing.
+    if not title_out:
+        imdb = imdb_name_fallback(url)
+        if imdb:
+            title_out = imdb["name"]
+            if not og_out.get("title"):
+                og_out["title"] = imdb["name"]
+            if imdb["role_summary"]:
+                if not meta_out:
+                    meta_out = imdb["role_summary"]
+                if not og_out.get("description"):
+                    og_out["description"] = imdb["role_summary"]
+
     out = {
         "url": url,
         "fetch_status": resp.status_code,
-        "title": extract_title(soup),
-        "meta_description": extract_meta_description(soup),
-        "og": extract_og(soup),
+        "title": title_out,
+        "meta_description": meta_out,
+        "og": og_out,
         "json_ld": extract_json_ld(soup),
         "body_text_excerpt": extract_body_excerpt(soup),
         "web_search_override": fm["web_search_override"],
