@@ -209,21 +209,26 @@ def _collect_vault_data(vault: Path) -> dict:
       - `hosts`: all bookmarks (filed + inbox).
       - `collections`: user dirs + `_unsorted` + `_broken` + `_inbox` (system).
     """
+    # User collections: any directory containing a README.md, at any depth,
+    # under a top-level segment that isn't `_`-prefixed or `outputs`. Nesting
+    # is bm 1.6+ — pre-1.6 vaults are fully flat and still walk correctly.
     user_collections: list[Path] = []
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
+            continue  # vault-root README.md is not a collection
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
+            continue
+        user_collections.append(coll)
+    # System pseudo-collections (flat sinks; not nested).
     system_collections: list[Path] = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name == "outputs":
-            continue
-        if child.name in ("_unsorted", "_broken"):
-            system_collections.append(child)
-            continue
-        if child.name.startswith("_"):
-            continue
-        if not (child / "README.md").exists():
-            continue
-        user_collections.append(child)
+    for special in ("_unsorted", "_broken"):
+        d = vault / special
+        if d.is_dir():
+            system_collections.append(d)
 
     bookmarks: list[dict] = []
     coll_counts: dict[str, int] = {}
@@ -298,13 +303,17 @@ def _collect_vault_data(vault: Path) -> dict:
         return True
 
     for coll in user_collections + system_collections:
+        # Collection identifier: vault-relative posix path. Flat collections
+        # render as a single segment (`flat-coll`); nested as a slash-path
+        # (`parent-coll/child-a`). System sinks (_unsorted, _broken) stay flat.
+        coll_id = coll.relative_to(vault).as_posix()
         count = 0
         for p in sorted(coll.glob("*.md")):
             if p.name == "README.md":
                 continue
-            if append_filed(p, coll.name):
+            if append_filed(p, coll_id):
                 count += 1
-        coll_counts[coll.name] = count
+        coll_counts[coll_id] = count
 
     inbox_dir = vault / "_inbox"
     inbox_count = 0
@@ -353,13 +362,17 @@ def _collect_vault_data(vault: Path) -> dict:
             })
             trash_count += 1
 
+    # Collection identifier == vault-relative posix path (flat: single segment;
+    # nested: slash-path). System sinks (_unsorted, _broken) are always flat.
+    def _cid(c: Path) -> str:
+        return c.relative_to(vault).as_posix()
     collections_out = [
-        {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "user"}
+        {"name": _cid(c), "count": coll_counts.get(_cid(c), 0), "kind": "user"}
         for c in user_collections
     ]
     collections_out.sort(key=lambda r: (-r["count"], r["name"]))
     collections_out.extend(
-        {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "system"}
+        {"name": _cid(c), "count": coll_counts.get(_cid(c), 0), "kind": "system"}
         for c in system_collections
     )
     collections_out.append({"name": "_inbox", "count": inbox_count, "kind": "system"})
