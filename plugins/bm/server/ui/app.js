@@ -12,6 +12,7 @@
     search: "",
     selectedTags: new Set(),
     viz: "list",
+    sidebarCollapsed: localStorage.getItem("bm-sidebar-collapsed") === "1",
   };
 
   // ---------- elements ----------
@@ -27,7 +28,12 @@
     activeFilters: $("active-filters"),
     list: $("bookmark-list"),
     loading: $("loading"),
+    sidebarToggle: $("sidebar-toggle"),
+    app: document.querySelector(".app"),
   };
+
+  // Apply persisted sidebar state immediately to avoid layout flash.
+  if (state.sidebarCollapsed) els.app.classList.add("sidebar-collapsed");
 
   // ---------- utils ----------
 
@@ -43,6 +49,19 @@
   };
 
   const dateOnly = (s) => (s || "").slice(0, 10);
+
+  // Favicon thumbnail via DuckDuckGo's free favicon service.
+  // Lightweight (no API key, ~few hundred bytes per icon), browser-cached.
+  const thumbnailHTML = (b) => {
+    const host = b.host;
+    if (!host) return `<div class="bm-thumb no-host" aria-hidden="true">·</div>`;
+    const src = `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico`;
+    // referrerpolicy=no-referrer + loading=lazy + onerror replace with first-letter glyph
+    return `<div class="bm-thumb">`
+      + `<img src="${src}" alt="" loading="lazy" referrerpolicy="no-referrer" `
+      + `onerror="this.parentElement.classList.add('no-host');this.outerHTML='${escapeHTML(host[0] || '·').toUpperCase()}';" />`
+      + `</div>`;
+  };
 
   // ---------- fetch ----------
 
@@ -163,17 +182,20 @@
       // Title fallback: for inbox without a title, use URL host + path
       const displayTitle = b.title || (isInbox ? (b.host + (b.url ? new URL(b.url).pathname.slice(0, 60) : "")) : b.url);
       return `<article class="bm-card${isInbox ? " inbox" : ""}">
-  <div class="bm-title"><a href="${url}" target="_blank" rel="noopener">${escapeHTML(displayTitle)}</a></div>
-  <div class="bm-url">${url}</div>
-  ${b.blurb ? `<div class="bm-blurb">${escapeHTML(b.blurb)}</div>` : ""}
-  <div class="bm-meta">
-    <span class="coll" data-coll="${escapeHTML(b.collection)}">${escapeHTML(b.collection)}/</span>
-    ${tags}
-    ${importedColl}
-    ${statusBroken}
-    ${needsReview}
-    ${inboxBadge}
-    <span>${escapeHTML(captured)}</span>
+  ${thumbnailHTML(b)}
+  <div class="bm-body">
+    <div class="bm-title"><a href="${url}" target="_blank" rel="noopener">${escapeHTML(displayTitle)}</a></div>
+    <div class="bm-url">${url}</div>
+    ${b.blurb ? `<div class="bm-blurb">${escapeHTML(b.blurb)}</div>` : ""}
+    <div class="bm-meta">
+      <span class="coll" data-coll="${escapeHTML(b.collection)}">${escapeHTML(b.collection)}/</span>
+      ${tags}
+      ${importedColl}
+      ${statusBroken}
+      ${needsReview}
+      ${inboxBadge}
+      <span>${escapeHTML(captured)}</span>
+    </div>
   </div>
 </article>`;
     }).join("");
@@ -306,6 +328,24 @@
   // ---------- event wiring ----------
 
   els.refresh.addEventListener("click", loadData);
+
+  function toggleSidebar(force) {
+    const next = (typeof force === "boolean") ? force : !state.sidebarCollapsed;
+    state.sidebarCollapsed = next;
+    els.app.classList.toggle("sidebar-collapsed", next);
+    localStorage.setItem("bm-sidebar-collapsed", next ? "1" : "0");
+  }
+
+  els.sidebarToggle.addEventListener("click", () => toggleSidebar());
+
+  // 's' anywhere outside an input also toggles
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "s" && !e.metaKey && !e.ctrlKey && !e.altKey
+        && !(e.target instanceof HTMLInputElement)
+        && !(e.target instanceof HTMLTextAreaElement)) {
+      toggleSidebar();
+    }
+  });
 
   els.search.addEventListener("input", debounce((e) => {
     state.search = e.target.value;
