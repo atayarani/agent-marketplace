@@ -50,28 +50,45 @@
 
   const dateOnly = (s) => (s || "").slice(0, 10);
 
-  // Thumbnail chain: og:image (rich, when captured during enrichment) →
-  // favicon (always works for any host) → first-letter glyph (no host at all).
+  // Thumbnail chain:
+  //   filed + og:image  → og:image (rich, captured during enrichment)
+  //   filed (no og)     → microlink screenshot (free 50/day per IP, no API key)
+  //   inbox / no host   → favicon (cheap, instant, always works)
+  //   anything missing  → first-letter glyph
   // All sources are lazy-loaded, no-referrer, browser-cached.
+  // The chain is implemented via cascading `onerror` handlers; if microlink
+  // rate-limits or the og:image 404s, the img reloads itself with the favicon.
   const thumbnailHTML = (b) => {
     const host = b.host;
     const ogImage = b.og_image;
     if (!host && !ogImage) return `<div class="bm-thumb no-host" aria-hidden="true">·</div>`;
     const faviconSrc = host ? `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico` : "";
     const glyph = escapeHTML((host && host[0]) || "·").toUpperCase();
+    // Build a fallback handler that drops to favicon (and from there to glyph)
+    const faviconFallback = faviconSrc
+      ? `this.src='${faviconSrc}';this.classList.add('fallback');this.onerror=function(){this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';};`
+      : `this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';`;
+
     if (ogImage) {
-      // Rich og:image — fill the tile with cover. On error, swap in favicon
-      // (and add `favicon-fallback` so CSS can downsize it to a contained icon).
       const ogSrc = escapeHTML(ogImage);
-      const fallback = faviconSrc
-        ? `this.src='${faviconSrc}';this.classList.add('fallback');this.onerror=function(){this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';};`
-        : `this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';`;
       return `<div class="bm-thumb rich">`
         + `<img src="${ogSrc}" alt="" loading="lazy" referrerpolicy="no-referrer" `
-        + `onerror="${fallback}" />`
+        + `onerror="${faviconFallback}" />`
         + `</div>`;
     }
-    // Favicon-only path (current default for filed without og_image and all inbox)
+
+    // Filed bookmarks without og:image → microlink screenshot tier.
+    // Inbox stays on favicon (un-enriched; also keeps us under microlink's
+    // 50/day quota since the bulk of items are inbox).
+    if (b.kind === "filed" && b.url) {
+      const microlinkSrc = `https://api.microlink.io/?url=${encodeURIComponent(b.url)}&screenshot=true&embed=screenshot.url`;
+      return `<div class="bm-thumb rich">`
+        + `<img src="${microlinkSrc}" alt="" loading="lazy" referrerpolicy="no-referrer" `
+        + `onerror="${faviconFallback}" />`
+        + `</div>`;
+    }
+
+    // Inbox + filed-without-host → favicon directly
     return `<div class="bm-thumb">`
       + `<img src="${faviconSrc}" alt="" loading="lazy" referrerpolicy="no-referrer" `
       + `onerror="this.parentElement.classList.add('no-host');this.outerHTML='${glyph}';" />`
