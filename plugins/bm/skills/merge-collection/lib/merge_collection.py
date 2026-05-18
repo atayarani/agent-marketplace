@@ -60,25 +60,32 @@ def short_url_hash(url: str) -> str:
 
 
 def collect_filed_bookmarks(vault: Path) -> list[Path]:
+    """Every *.md file directly inside a collection dir (any depth) is a
+    candidate filed bookmark. Collections are dirs with a README.md.
+    _unsorted/ and _broken/ are special staging dirs whose flat *.md files
+    also count. Skip subtrees rooted at other _-prefixed dirs or outputs/."""
     out: list[Path] = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name in ("_unsorted", "_broken"):
-            for p in child.glob("*.md"):
+    # Special: _unsorted and _broken at vault root are flat bookmark sinks
+    for special in ("_unsorted", "_broken"):
+        d = vault / special
+        if d.is_dir():
+            for p in d.glob("*.md"):
                 if p.name != "README.md":
                     out.append(p)
+    # Recursive: any dir with README.md whose top segment isn't a system dir
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if child.name.startswith("_"):
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        if child.name == "outputs":
-            continue
-        if not (child / "README.md").exists():
-            continue
-        for p in child.glob("*.md"):
+        for p in coll.glob("*.md"):
             if p.name != "README.md":
                 out.append(p)
-    return out
+    return sorted(set(out))
 
 
 def collect_inbox(vault: Path) -> list[Path]:
@@ -223,17 +230,33 @@ def main() -> int:
         print(f"error: source collection not found: {src_dir}", file=sys.stderr)
         return 1
     if not (src_dir / "README.md").exists():
-        print(f"error: '{src_dir.name}/' has no README.md — not recognized as a user collection", file=sys.stderr)
+        print(f"error: '{args.from_dir}/' has no README.md — not recognized as a user collection", file=sys.stderr)
         return 1
     if not dst_dir.is_dir():
         print(
             f"error: destination collection not found: {dst_dir}\n"
-            f"  hint: create it first with `mkdir {dst_dir} && printf '# ...\\n' > {dst_dir}/README.md`",
+            f"  hint: create it first with `mkdir -p {dst_dir} && printf '# ...\\n' > {dst_dir}/README.md`",
             file=sys.stderr,
         )
         return 1
     if not (dst_dir / "README.md").exists():
-        print(f"error: '{dst_dir.name}/' has no README.md", file=sys.stderr)
+        print(f"error: '{args.to_dir}/' has no README.md", file=sys.stderr)
+        return 1
+    # Refuse to merge a parent collection that still has child collections.
+    # The merge moves *.md files from src_dir into dst_dir; nested subcollections
+    # would be orphaned. Force the user to merge or remove children first.
+    child_collections = [
+        p for p in src_dir.rglob("README.md")
+        if p.parent != src_dir
+    ]
+    if child_collections:
+        rels = ", ".join(sorted(str(p.parent.relative_to(vault)) for p in child_collections)[:3])
+        more = f" (+{len(child_collections) - 3} more)" if len(child_collections) > 3 else ""
+        print(
+            f"error: '{args.from_dir}/' contains nested subcollections: {rels}{more}\n"
+            f"  hint: merge or remove the child collections first, then re-run.",
+            file=sys.stderr,
+        )
         return 1
 
     # Plan the moves
@@ -365,9 +388,9 @@ def main() -> int:
     print(f"- Inbox rewrites:               **{inbox_rewritten}**")
     print(f"- proposed_collection rewrites: **{proposed_rewritten}**")
     if readme_removed:
-        print(f"- `{src_dir.name}/README.md` removed")
+        print(f"- `{args.from_dir}/README.md` removed")
     if dir_removed:
-        print(f"- `{src_dir.name}/` directory removed")
+        print(f"- `{args.from_dir}/` directory removed")
     return 0
 
 

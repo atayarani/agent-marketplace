@@ -46,21 +46,28 @@ def parse_frontmatter(path: Path) -> dict | None:
 
 
 def list_user_collections(vault: Path) -> list[Path]:
+    """Every directory under `vault` (any depth) that contains a README.md
+    is a collection. Skip subtrees rooted at a top-level _-prefixed dir or
+    `outputs/` (vault-internal staging).
+    """
     out = []
-    for child in sorted(vault.iterdir()):
-        if not child.is_dir():
+    for readme in sorted(vault.rglob("README.md")):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
+            continue  # vault-root README.md is not a collection
+        top = parts[0]
+        if top.startswith("_") or top == "outputs":
             continue
-        if child.name.startswith("_"):
-            continue
-        if child.name == "outputs":
-            continue
-        if not (child / "README.md").exists():
-            continue
-        out.append(child)
+        out.append(coll)
     return out
 
 
 def count_bookmarks(coll: Path) -> list[Path]:
+    """Filed bookmarks live directly in the collection dir as *.md files.
+    Excludes README.md and any files in nested subcollections (those belong
+    to a child collection, audited separately)."""
     return [p for p in coll.glob("*.md") if p.name != "README.md"]
 
 
@@ -120,18 +127,24 @@ def main() -> int:
 
     collections = list_user_collections(vault)
 
+    def coll_id(coll: Path) -> str:
+        """Stable identifier = path relative to vault, posix-style.
+        Single-segment for flat collections, slash-delimited for nested ones."""
+        return coll.relative_to(vault).as_posix()
+
     # First pass: gather per-collection data
     coll_data: dict[str, dict] = {}
     global_tag_to_colls: dict[str, Counter] = defaultdict(Counter)
     for coll in collections:
         bookmarks = count_bookmarks(coll)
         tag_counts, _ = gather_tags(bookmarks)
-        coll_data[coll.name] = {
+        cid = coll_id(coll)
+        coll_data[cid] = {
             "count": len(bookmarks),
             "tags": tag_counts,
         }
         for tag, n in tag_counts.items():
-            global_tag_to_colls[tag][coll.name] += n
+            global_tag_to_colls[tag][cid] += n
 
     total_bookmarks = sum(d["count"] for d in coll_data.values())
     sizes = {name: d["count"] for name, d in coll_data.items()}

@@ -34,8 +34,8 @@ A single JSON object — nothing else. No prose, no markdown, no code fences, no
   "blurb": "<1-2 factual sentences>",
   "tags": ["<tag-name-from-tags.yaml>", ...],
   "proposed_tags": ["<genuinely-new-tag-name>", ...],
-  "collection": "<existing-dir-name>" | null,
-  "proposed_collection": null | {"name": "<kebab-case>", "description": "<one line>"},
+  "collection": "<existing-collection-path>" | null,
+  "proposed_collection": null | {"name": "<kebab-case-path>", "description": "<one line>"},
   "confidence": 0.0
 }
 ```
@@ -50,9 +50,9 @@ All seven keys must be present. Use `[]` for empty lists and `null` (not omissio
 
 3. **Tags**: pick from `tags.yaml` `name` entries. Use each entry's `description` to judge fit; use `aliases` to map synonyms (page is about "ML" and `ml-research` has `aliases: [machine-learning, ml]` → pick `ml-research`, not invent `ml`). Only put *genuinely new* tags in `proposed_tags`. If the vocab is empty (bootstrap), `tags: []` is correct and strong-signal new tags go in `proposed_tags`.
 
-4. **Collection**: pick **exactly one** existing dir name. If the collection list is non-empty, you **must** pick one — even when the fit is rough, pick the least-bad. The parent skill writes filed bookmarks to `$vault/$collection/<slug>.md`; returning `null` when collections exist crashes filing. Use `proposed_collection` (and the resulting `needs_review: true` downstream) to signal that the fit is poor or a new collection is warranted:
-   - Picked an existing dir but considered another existing dir → `proposed_collection: {"name": "<runner-up-existing-dir>", "description": "<why it was a near miss>"}`.
-   - Picked an existing dir under protest (genuine poor fit; a new collection should exist) → `proposed_collection: {"name": "<kebab-case-new-name>", "description": "<one-line scope of the new collection>"}`. The filed bookmark inherits `needs_review: true`.
+4. **Collection**: pick **exactly one** existing collection path. Collection names may be nested — they look like `imdb-profiles/sci-fi-trek-alumni`, where each `/`-segment is a directory and the rightmost is the leaf dir that will hold the filed bookmark. The collection list in your prompt enumerates every collection with its full path (parents that have their own `README.md` are listed too, alongside their children — pick the parent for a "general fit" bookmark and the child for a themed match). If the collection list is non-empty, you **must** pick one — even when the fit is rough, pick the least-bad. The parent skill writes filed bookmarks to `$vault/<collection-path>/<slug>.md`; returning `null` when collections exist crashes filing. Use `proposed_collection` (and the resulting `needs_review: true` downstream) to signal that the fit is poor or a new collection is warranted:
+   - Picked an existing path but considered another existing path → `proposed_collection: {"name": "<runner-up-existing-path>", "description": "<why it was a near miss>"}`.
+   - Picked an existing path under protest (genuine poor fit; a new collection should exist) → `proposed_collection: {"name": "<kebab-case-path>", "description": "<one-line scope of the new collection>"}`. The name may be a flat dir name (`gaming-guides`) or a nested path (`gaming/idle-incremental`); each path segment must match `[a-z0-9][a-z0-9-]*`. The filed bookmark inherits `needs_review: true`.
    - Collection list is **empty** (bootstrap mode — no existing dirs at all) → `collection: null` AND `proposed_collection: {name, description}`. **This is the only case** `collection` may be `null`.
 
 5. **Confidence**: your overall confidence in `collection` + `tags` together, in `[0, 1]`.

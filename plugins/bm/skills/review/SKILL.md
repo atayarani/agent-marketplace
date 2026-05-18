@@ -276,40 +276,46 @@ Branch on the option label. Use the mutation helper in 3.f. Update counters at t
 
 **Option 4 (Variant A) or Option 2 (Variant B) — Move to different collection**
 
-Build a recency-ranked list of existing collection dirs:
+Build a recency-ranked list of existing collections (any depth — a dir is a collection iff it contains a `README.md`):
 
 ```bash
 python3 - "$vault" <<'PYEOF' > /tmp/bm_review_dirs.txt
-import os, sys, re, glob
-vault = sys.argv[1]
+import os, sys, re
+from pathlib import Path
+vault = Path(sys.argv[1])
 dirs = []
-for entry in os.listdir(vault):
-    p = os.path.join(vault, entry)
-    if not os.path.isdir(p): continue
-    if entry.startswith("_") or entry.startswith("."): continue
-    # Most recent enriched among files in this dir
+for readme in vault.rglob("README.md"):
+    coll = readme.parent
+    rel = coll.relative_to(vault)
+    parts = rel.parts
+    if not parts: continue
+    top = parts[0]
+    if top.startswith("_") or top == "outputs": continue
+    # Most recent enriched among files in this collection (non-recursive
+    # over the dir itself — nested subcollections audit themselves)
     latest = ""
-    for f in glob.glob(os.path.join(p, "*.md")):
+    for f in coll.glob("*.md"):
+        if f.name == "README.md": continue
         try:
-            with open(f) as fh: head = fh.read(2048)
+            head = f.read_text(encoding="utf-8", errors="replace")[:2048]
             m = re.search(r"^enriched:\s*(\S+)", head, re.MULTILINE)
             if m and m.group(1) > latest: latest = m.group(1)
         except OSError: pass
-    dirs.append((latest, entry))
+    dirs.append((latest, rel.as_posix()))
 dirs.sort(reverse=True)
 for _, e in dirs: print(e)
 PYEOF
 ```
 
-Take the top 3 dirs (skipping the bookmark's `current_collection`) and call `AskUserQuestion`:
+Take the top 3 collection paths (skipping the bookmark's `current_collection`) and call `AskUserQuestion`:
 - `header`: `"Move to"`
 - `question`: `"Move '<title>' from <current_collection>/ to which collection?"`
-- `options`: 3 labels = top 3 dir names; descriptions = a one-line README excerpt if available, else dir name. "Other" auto-added for free-text entry of any other dir.
+- `options`: 3 labels = top 3 collection paths (slash-delimited for nested); descriptions = a one-line README excerpt if available, else the path. "Other" auto-added for free-text entry of any other path (flat name or nested like `imdb-profiles/sci-fi-trek-alumni`).
 - `multiSelect`: `false`
 
 On selection:
-- If existing dir → `mv "$bookmark_file" "$vault/$choice/"`.
-- If "Other" + free-text → treat the text as a kebab-case dir name. If the dir doesn't exist, create it via the same `mkdir + README` pattern as Option 1 (description: empty body; user edits later). Then `mv`.
+- If existing collection path → `mv "$bookmark_file" "$vault/$choice/"`.
+- If "Other" + free-text → treat the text as a kebab-case collection path (segments separated by `/`). If any segment of the path doesn't exist as a directory with `README.md`, create the missing dirs with stub READMEs via the same nested-create pattern as enrich §5.f Option 1 (parent dirs get a `Container for nested collections under '<parent>'.` placeholder; the leaf gets an empty body). Then `mv`.
 
 Frontmatter mutation: mode `clear-proposed-collection` (drops `proposed_collection` only). Then recompute `needs_review`.
 

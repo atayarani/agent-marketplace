@@ -69,27 +69,36 @@ These get pasted into every subagent prompt — caching them avoids redundant wo
 tags_yaml=$(cat "$vault/tags.yaml" 2>/dev/null || echo "tags: []")
 ```
 
-**b. Collection list** — for each dir in `$vault/` where the name doesn't start with `_`, isn't `outputs`, AND contains a `README.md`:
+**b. Collection list** — every directory under `$vault/` (recursive, any depth) where the directory contains a `README.md` is a collection. Each collection's identifier is its path relative to `$vault` (e.g. `imdb-profiles` for a flat collection, `imdb-profiles/sci-fi-trek-alumni` for a nested one). Both parents and children with READMEs are surfaced — pick the parent for a generic fit, the child for a themed match. Skip any subtree whose top segment starts with `_` or is `outputs` (vault-internal staging dirs).
 
 ```bash
-collection_list=""
-bootstrap_mode=true
-for d in "$vault"/*/; do
-  name=$(basename "$d")
-  case "$name" in _*|outputs) continue;; esac
-  if [ -f "$d/README.md" ]; then
-    desc=$(grep -m1 '^[^[:space:]#]' "$d/README.md" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    [ -z "$desc" ] && desc="(no description in README.md)"
-    collection_list+="${name}/\n  ${desc}\n"
-    bootstrap_mode=false
-  else
-    echo "note: directory '${name}/' has no README.md; not surfacing as a filing target" >&2
-  fi
-done
-[ -z "$collection_list" ] && collection_list="(none — vault has no collections yet)"
+collection_list=$(python3 - "$vault" <<'PYEOF'
+import os, sys
+from pathlib import Path
+vault = Path(sys.argv[1])
+out_lines = []
+for readme in sorted(vault.rglob("README.md")):
+    rel = readme.parent.relative_to(vault)
+    parts = rel.parts
+    if not parts:
+        continue  # vault-root README.md is not a collection
+    if parts[0].startswith("_") or parts[0] == "outputs":
+        continue  # skip _inbox/_failed/outputs/etc subtrees
+    desc = "(no description in README.md)"
+    for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = line.strip()
+        if s and not s.startswith("#"):
+            desc = s
+            break
+    out_lines.append(f"{rel.as_posix()}/\n  {desc}")
+print("\n".join(out_lines))
+PYEOF
+)
+bootstrap_mode=false
+[ -z "$collection_list" ] && { collection_list="(none — vault has no collections yet)"; bootstrap_mode=true; }
 ```
 
-Note: this list is built once and **not refreshed** mid-run. If step 5.f creates a new collection, subsequent bookmarks in the same run won't see it in their enricher prompt — but step 5.f's auto-reroute path catches the case where the enricher re-proposes the just-created name.
+Note: this list is built once and **not refreshed** mid-run. If step 5.f creates a new collection, subsequent bookmarks in the same run won't see it in their enricher prompt — but step 5.f's auto-reroute path catches the case where the enricher re-proposes the just-created path.
 
 ## 5. Per-file loop (sequential)
 
@@ -336,31 +345,52 @@ This branch fires in two cases:
 
 When `parsed.proposed_collection` is non-null, decide whether to honor it before filing. **Skip this entire step if `parsed.proposed_collection` is `null`.**
 
-**Auto-reroute** — if `parsed.proposed_collection.name` matches an existing directory under `$vault/` (and is not the current `$collection`):
-- The proposed collection already exists — either an alternative existing dir the enricher considered, or a dir created earlier in this same run. Silently:
+Collection paths may be nested (e.g. `imdb-profiles/sci-fi-trek-alumni`); each `/`-segment must match `^[a-z0-9][a-z0-9-]*$`. The full proposed name is treated as a path relative to `$vault`; an "existing collection" is any path whose directory contains a `README.md`.
+
+**Auto-reroute** — if `parsed.proposed_collection.name` matches an existing collection path under `$vault/` (i.e. `$vault/$name/README.md` exists) and is not the current `$collection`:
+- The proposed collection already exists — either an alternative existing collection the enricher considered, or one created earlier in this same run. Silently:
   - Set `$collection = parsed.proposed_collection.name`.
   - Clear `parsed.proposed_collection` (resolved — don't carry into frontmatter).
 - Continue to 5.g with the rerouted target.
 
-**Interactive prompt** — if `parsed.proposed_collection.name` is brand-new (no matching dir) AND neither `--no-prompt` nor `--dry-run` is set:
+**Interactive prompt** — if `parsed.proposed_collection.name` is brand-new (no `README.md` at that path) AND neither `--no-prompt` nor `--dry-run` is set:
 
 Use the `AskUserQuestion` tool:
 - **header**: `"New collection?"`
 - **question**: `"Bookmark '<parsed.title>' was filed to <$collection>/, but the enricher proposed creating '<parsed.proposed_collection.name>/' (<parsed.proposed_collection.description>). How would you like to handle it?"`
 - **options** (3, plus "Other" added automatically by the tool):
-  1. label: `"Create <name>/ and file there"` — description: `"mkdir + write README.md from the proposed description; file this bookmark in the new dir."`
+  1. label: `"Create <name>/ and file there"` — description: `"mkdir + write README.md from the proposed description; file this bookmark in the new dir. For nested paths, missing parent collections also get a stub README."`
   2. label: `"File to <$collection>/ with needs_review"` — description: `"keep current target; proposed_collection in frontmatter for review later."`
   3. label: `"Leave in _inbox/"` — description: `"don't file; user resolves later."`
 
 Act on the response:
 
-- **Option 1 (create new dir)**:
-  - Validate `parsed.proposed_collection.name` matches `^[a-z0-9][a-z0-9-]*$`. If not, print warning to stderr and fall through to Option 2.
-  - `mkdir -p "$vault/$proposed_name"`.
-  - Title-case the dir name for the H1 (`gaming-guides` → `Gaming Guides`):
+- **Option 1 (create new collection)**:
+  - Validate `parsed.proposed_collection.name` matches `^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*$` (kebab-case per segment, `/` between segments). If not, print warning to stderr and fall through to Option 2.
+  - `mkdir -p "$vault/$proposed_name"` (creates any missing intermediate dirs).
+  - For each `/`-segment of `$proposed_name`, if the segment's accumulated path is missing a `README.md`, write a stub:
+    - For the **leaf** segment: H1 from the segment's title-cased name, body = the enricher's `$proposed_description`.
+    - For each **intermediate** parent segment: H1 from the segment's title-cased name, body = `Container for nested collections of <leaf H1 plural>.` (placeholder — user can edit later).
+  - Title-case formula (`gaming-guides` → `Gaming Guides`):
     ```bash
-    h1=$(echo "$proposed_name" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)} 1')
-    printf "# %s\n\n%s\n" "$h1" "$proposed_description" > "$vault/$proposed_name/README.md"
+    titlecase() { echo "$1" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)} 1'; }
+    ```
+  - Pseudocode:
+    ```bash
+    IFS='/' read -ra segs <<< "$proposed_name"
+    cur=""
+    for i in "${!segs[@]}"; do
+      cur="${cur:+$cur/}${segs[$i]}"
+      readme="$vault/$cur/README.md"
+      [ -f "$readme" ] && continue
+      h1=$(titlecase "${segs[$i]}")
+      if [ "$i" -eq "$((${#segs[@]} - 1))" ]; then
+        body="$proposed_description"
+      else
+        body="Container for nested collections under '$h1'."
+      fi
+      printf "# %s\n\n%s\n" "$h1" "$body" > "$readme"
+    done
     ```
   - Set `$collection = $proposed_name`.
   - Clear `parsed.proposed_collection` (resolved).
@@ -396,13 +426,13 @@ if not slug:
     slug = hashlib.sha1(url.encode()).hexdigest()[:12]
 ```
 
-Target path: `$vault/$collection/$slug.md`.
+Target path: `$vault/$collection/$slug.md`. `$collection` may be a slash-delimited path (e.g. `imdb-profiles/sci-fi-trek-alumni`); `mkdir -p "$vault/$collection"` handles intermediate dirs.
 
-Collision handling:
+Collision handling (scoped to the same target dir — collisions across different nested collections don't apply):
 1. If `$vault/$collection/$slug.md` exists → try `$slug-$(printf '%s' "$url" | shasum | head -c 6).md`.
 2. If THAT also exists → append `-$(date +%s)`.
 
-Ensure `$vault/$collection/` exists (step 5.f either kept the enricher's pick, rerouted to an existing dir, or created one — `mkdir -p` defensively anyway).
+Ensure `$vault/$collection/` exists (step 5.f either kept the enricher's pick, rerouted to an existing collection, or created one — `mkdir -p` defensively anyway).
 
 ### 5.i — `--dry-run` short-circuit
 

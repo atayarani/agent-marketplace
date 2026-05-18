@@ -79,12 +79,18 @@ def collect_files(vault: Path, include_filed: bool) -> list[Path]:
     if inbox.is_dir():
         files.extend(sorted(inbox.glob("*.md")))
     if include_filed:
-        for entry in sorted(vault.iterdir()):
-            if not entry.is_dir():
+        # Walk every collection dir (any nesting depth — a dir is a collection
+        # if it has README.md and isn't under a system tree).
+        for readme in sorted(vault.rglob("README.md")):
+            coll = readme.parent
+            rel = coll.relative_to(vault)
+            parts = rel.parts
+            if not parts:
                 continue
-            if entry.name.startswith("_") or entry.name == ".git":
+            top = parts[0]
+            if top.startswith("_") or top == "outputs" or top == ".git":
                 continue
-            files.extend(sorted(entry.glob("*.md")))
+            files.extend(sorted(p for p in coll.glob("*.md") if p.name != "README.md"))
     return files
 
 
@@ -116,13 +122,20 @@ def load_known_tag_tokens(vault: Path) -> set[str]:
 
 
 def load_existing_collection_slugs(vault: Path) -> set[str]:
+    """Return the set of existing collection identifiers (vault-relative
+    posix paths). For flat vaults this is just the top-level dir names;
+    nested collections appear as `parent/child` paths."""
     slugs: set[str] = set()
-    for entry in vault.iterdir():
-        if not entry.is_dir():
+    for readme in vault.rglob("README.md"):
+        coll = readme.parent
+        rel = coll.relative_to(vault)
+        parts = rel.parts
+        if not parts:
             continue
-        if entry.name.startswith("_") or entry.name == ".git":
+        top = parts[0]
+        if top.startswith("_") or top == "outputs" or top == ".git":
             continue
-        slugs.add(entry.name)
+        slugs.add(rel.as_posix())
     return slugs
 
 

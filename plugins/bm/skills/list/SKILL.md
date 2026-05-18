@@ -36,13 +36,13 @@ done
 
 ## 2. Build the candidate file list
 
-Filed bookmarks live at `<vault>/<collection>/<slug>.md`. Top-level files (AGENTS.md, tags.yaml, phase docs) and system dirs (`_inbox/`, `_failed/`, `_trash/`, `_broken/`, `_proposals/`, `outputs/`) are not bookmarks and must be excluded.
+Filed bookmarks live at `<vault>/<collection-path>/<slug>.md` where `<collection-path>` may be **nested** (e.g. `imdb-profiles/sci-fi-trek-alumni`). Top-level files (AGENTS.md, tags.yaml, phase docs) and system dirs (`_inbox/`, `_failed/`, `_trash/`, `_broken/`, `_proposals/`, `outputs/`) are not bookmarks and must be excluded.
 
-`find -mindepth 2 -maxdepth 2` naturally restricts to exactly `<vault>/<dir>/<file>` — no vault-root files, no deeper nesting.
+`find -mindepth 2` allows any nesting depth ≥ 2 — required for nested collections. The `-not -path '*/_*'` predicate skips every `_`-prefixed system dir; `-not -path '*/outputs/*'` skips the `outputs/` staging dir.
 
 ```bash
 candidates=$(mktemp)
-find "$vault" -mindepth 2 -maxdepth 2 -type f -name '*.md' \
+find "$vault" -mindepth 2 -type f -name '*.md' \
   -not -path '*/_*' \
   -not -path '*/outputs/*' \
   -not -name 'README.md' \
@@ -56,19 +56,20 @@ if [ ! -s "$candidates" ]; then
 fi
 ```
 
-The `-not -path '*/_*'` predicate skips every `_`-prefixed system dir in one shot (the vault contract: collections never start with `_`).
+(The vault contract: collection dirs never start with `_`, so a single ancestor-segment match suffices to filter system trees.)
 
 ## 3. Filter, sort, format, print
 
 Hand off to python via the same `uv run --with pyyaml` pattern as `review/SKILL.md` step 3.d.i. Python parses `$ARGUMENTS` via `argparse` + `shlex.split`, loads frontmatter for each candidate, applies AND-semantic filter predicates, sorts by `captured`/`enriched` desc, truncates to `--limit`, and emits the chosen format.
 
 ```bash
-uv run --quiet --with pyyaml --no-project -- python3 - "$candidates" "$ARGUMENTS" <<'PYEOF'
+uv run --quiet --with pyyaml --no-project -- python3 - "$candidates" "$vault" "$ARGUMENTS" <<'PYEOF'
 import sys, yaml, re, os, json, shlex, argparse
 from datetime import datetime, date as _date
 
 candidates_path = sys.argv[1]
-args_str = sys.argv[2] if len(sys.argv) > 2 else ""
+vault_root = sys.argv[2]
+args_str = sys.argv[3] if len(sys.argv) > 3 else ""
 
 def _stringify(o):
     """YAML parses ISO-8601 timestamps to datetime objects; stringify for safe downstream use."""
@@ -129,9 +130,19 @@ for path in paths:
     blurb = extract_blurb(m.group(2)) or (fm.get("blurb") or "")
     fm["blurb"] = blurb
 
-    coll = os.path.basename(os.path.dirname(path))
-    if args.collection and coll != args.collection:
-        continue
+    # Collection path = dir containing the file, relative to vault.
+    # `--collection X` matches exact path; `--collection X/` (trailing slash)
+    # is a tree-prefix match that includes descendants.
+    coll = os.path.relpath(os.path.dirname(path), vault_root).replace(os.sep, "/")
+    if args.collection:
+        want = args.collection
+        if want.endswith("/"):
+            prefix = want.rstrip("/")
+            if not (coll == prefix or coll.startswith(prefix + "/")):
+                continue
+        else:
+            if coll != want:
+                continue
 
     tags = fm.get("tags") or []
     if not all(t in tags for t in args.tag):
