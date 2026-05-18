@@ -472,40 +472,76 @@ Close frontmatter with `---`, then write the **body**:
 
 When **filing for the first time** (no existing target at `$target`), there are no user notes to preserve; emit a fresh body. When **overwriting an existing filed bookmark** (only possible under `--force`), extract the existing user-notes region first and append it to the new body.
 
-Use a Python helper to write atomically — bash heredocs can mangle blurbs containing `$`, backticks, or multi-line content:
+Build the frontmatter as a multi-line string in bash, then hand off to a small Python writer (bash heredocs alone can't safely express a blurb containing `$`, backticks, or multiline content):
 
 ```bash
-uv run --quiet --with pyyaml --no-project -- python3 - <<'PYEOF'
-import os, sys, re
-from pathlib import Path
+# Compose frontmatter lines in the required order (no `blurb:` field — body holds it)
+fm_lines=(
+  "url: $url"
+  "title: $title"
+  "tags: [$(printf '%s, ' "${tags[@]}" | sed 's/, $//')]"
+  "captured: $captured"
+  "enriched: $(date -Iseconds)"
+  "status: active"
+  "source: $source"
+)
+# Conditional fields — only emit when set
+[ -n "$author" ]    && fm_lines+=("author: $author")
+[ -n "$published" ] && fm_lines+=("published: $published")
+if [ "$needs_review" = "true" ]; then
+  fm_lines+=("needs_review: true")
+  fm_lines+=("confidence: $confidence")
+  if [ ${#tags_proposed[@]} -gt 0 ]; then
+    fm_lines+=("proposed_tags: [$(printf '%s, ' "${tags_proposed[@]}" | sed 's/, $//')]")
+  fi
+  if [ -n "$proposed_collection_name" ]; then
+    fm_lines+=("proposed_collection:")
+    fm_lines+=("  name: $proposed_collection_name")
+    fm_lines+=("  description: $proposed_collection_description")
+  fi
+fi
 
-target = Path(os.environ["TARGET_PATH"])
-blurb = os.environ.get("BLURB", "").strip()
-existing_user_notes = ""
+# Join with newlines + trailing newline (the Python writer expects this shape)
+FRONTMATTER=$(printf '%s\n' "${fm_lines[@]}")
+
+export TARGET_PATH="$target" BLURB="$parsed_blurb" FRONTMATTER
+
+uv run --quiet --no-project -- python3 - <<'PYEOF'
+import os, re
+from pathlib import Path
 
 MARKER = "<!-- /llm-managed -->"
 
-# Preserve user notes when overwriting an existing target (--force path)
+target = Path(os.environ["TARGET_PATH"])
+blurb = os.environ.get("BLURB", "").strip()
+frontmatter = os.environ["FRONTMATTER"]
+if not frontmatter.endswith("\n"):
+    frontmatter += "\n"
+
+# Preserve user notes when overwriting an existing target (--force path).
+# Pre-migration files (no marker) — treat the whole body as user notes;
+# migrated files — keep only what's below the marker.
+existing_user_notes = ""
 if target.exists():
     old = target.read_text(encoding="utf-8")
     m = re.match(r"^---\n(.*?\n)---\n(.*)", old, re.DOTALL)
-    if m and MARKER in m.group(2):
-        _, _, user_part = m.group(2).partition(MARKER)
-        existing_user_notes = user_part.lstrip("\n").rstrip() + "\n" if user_part.strip() else ""
+    if m:
+        body = m.group(2)
+        if MARKER in body:
+            _, _, user_part = body.partition(MARKER)
+            existing_user_notes = user_part.lstrip("\n").rstrip()
+        else:
+            existing_user_notes = body.strip()
 
-# (Frontmatter built earlier in the bash, passed via $FRONTMATTER env var)
-frontmatter = os.environ["FRONTMATTER"]
-
-body_parts = [blurb, MARKER]
-out = f"---\n{frontmatter}---\n\n" + "\n\n".join(body_parts) + "\n"
+out = f"---\n{frontmatter}---\n\n{blurb}\n\n{MARKER}\n"
 if existing_user_notes:
-    out += "\n" + existing_user_notes
+    out += "\n" + existing_user_notes + "\n"
 
 target.write_text(out, encoding="utf-8")
 PYEOF
 ```
 
-The bash that wraps this exports `TARGET_PATH`, `BLURB`, and `FRONTMATTER` (the YAML between `---` markers, NOT including the markers themselves, with a trailing newline).
+No external Python dependencies — the writer is plain `python3`, callable via `uv run --no-project` (or directly if the user's `python3` is recent enough).
 
 `filed=$((filed+1))`. If `$needs_review`: `needs_review_count=$((needs_review_count+1))`.
 

@@ -376,8 +376,10 @@ elif mode == "set-blurb":
             user_notes = user_notes.lstrip("\n").rstrip()
         else:
             user_notes = body.strip()
-        parts = [new_blurb, LLM_MARKER]
-        new_body = "\n\n" + "\n\n".join(parts) + "\n"
+        # body is the substring after the closing `---\n` — start with a single
+        # blank line so the final file has `---\n\n<blurb>` (one blank line),
+        # matching the shape /bm:enrich step 5.j writes.
+        new_body = f"\n{new_blurb}\n\n{LLM_MARKER}\n"
         if user_notes:
             new_body += "\n" + user_notes + "\n"
         body = new_body
