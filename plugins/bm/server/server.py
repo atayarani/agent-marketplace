@@ -40,7 +40,7 @@ UI_ASSETS = {  # whitelist of /static/<name> → content-type
     "style.css": "text/css; charset=utf-8",
 }
 URL_RE = re.compile(r"^https?://[^\s]+$")
-FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)", re.DOTALL)
+FRONTMATTER_RE = re.compile(r"^(---\n)(.*?\n)(---\n?)(.*)", re.DOTALL)
 LLM_MARKER = "<!-- /llm-managed -->"
 VAULT_CANDIDATES = [
     os.environ.get("BM_VAULT") or "",
@@ -143,7 +143,7 @@ def _parse_frontmatter_block(text: str) -> tuple[dict, str]:
     m = FRONTMATTER_RE.match(text)
     if not m:
         return {}, ""
-    block, body = m.group(1), m.group(2)
+    block, body = m.group(2), m.group(4)
     fm: dict = {}
     for line in block.splitlines():
         if not line or line.startswith("#"):
@@ -315,6 +315,44 @@ def _collect_vault_data(vault: Path) -> dict:
             if append_inbox(p):
                 inbox_count += 1
 
+    # _trash/ — surfaced as a system collection with kind="trash" per bookmark.
+    # NOT counted in totals.bookmarks; NOT included in tag/host aggregates.
+    trash_count = 0
+    trash_dir = vault / "_trash"
+    if trash_dir.is_dir():
+        for p in sorted(trash_dir.glob("*.md")):
+            if p.name == ".gitkeep":
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fm, body = _parse_frontmatter_block(text)
+            if not fm:
+                continue
+            url = fm.get("url") or ""
+            host = _host_from_url(url)
+            tags = [str(t) for t in (fm.get("tags") or []) if t]
+            bookmarks.append({
+                "kind": "trash",
+                "url": url,
+                "title": fm.get("title") or "",
+                "blurb": _extract_blurb(body) or fm.get("blurb") or "",
+                "tags": tags,
+                "collection": "_trash",
+                "captured": fm.get("captured") or "",
+                "enriched": fm.get("enriched") or "",
+                "status": "trashed",
+                "source": fm.get("source") or "",
+                "host": host,
+                "og_image": fm.get("og_image") or "",
+                "needs_review": False,
+                "trashed_from": fm.get("trashed_from") or "",
+                "trashed_at": fm.get("trashed_at") or "",
+                "path": str(p.relative_to(vault)),
+            })
+            trash_count += 1
+
     collections_out = [
         {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "user"}
         for c in user_collections
@@ -325,14 +363,18 @@ def _collect_vault_data(vault: Path) -> dict:
         for c in system_collections
     )
     collections_out.append({"name": "_inbox", "count": inbox_count, "kind": "system"})
+    collections_out.append({"name": "_trash", "count": trash_count, "kind": "system"})
 
+    # totals.bookmarks counts active items only (filed + inbox); trash is separate.
+    active = len(bookmarks) - trash_count
     return {
         "vault": str(vault),
         "generated_at": iso_now(),
         "totals": {
-            "bookmarks": len(bookmarks),
-            "filed": len(bookmarks) - inbox_count,
+            "bookmarks": active,
+            "filed": active - inbox_count,
             "inbox": inbox_count,
+            "trashed": trash_count,
             "collections": len(user_collections),
             "tags": len(tag_counter),
             "hosts": len(host_counter),
@@ -348,8 +390,70 @@ def _collect_vault_data(vault: Path) -> dict:
     }
 
 
+def _inject_frontmatter_fields(path: Path, fields: dict[str, str]) -> None:
+    """Insert `key: "value"` lines just before the closing `---` of the
+    frontmatter. Values are double-quoted to survive YAML colons / spaces.
+    """
+    text = path.read_text(encoding="utf-8")
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return
+    open_marker, fm_inner, close_marker, body = m.group(1), m.group(2), m.group(3), m.group(4)
+    if not fm_inner.endswith("\n"):
+        fm_inner += "\n"
+    extras_lines = []
+    for k, v in fields.items():
+        escaped = str(v).replace("\\", "\\\\").replace('"', '\\"')
+        extras_lines.append(f'{k}: "{escaped}"\n')
+    path.write_text(open_marker + fm_inner + "".join(extras_lines) + close_marker + body, encoding="utf-8")
+
+
+def _strip_frontmatter_fields(path: Path, keys: tuple[str, ...]) -> None:
+    """Remove top-level `key: ...` lines (not indented) from the frontmatter."""
+    text = path.read_text(encoding="utf-8")
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return
+    open_marker = m.group(1)
+    fm_inner = m.group(2)
+    close_marker = m.group(3)
+    body = m.group(4)
+    kept = []
+    drop_set = set(keys)
+    for line in fm_inner.splitlines():
+        # Match top-level (non-indented) lines like `key: ...`
+        if line and not line.startswith((" ", "\t")) and ":" in line:
+            key = line.split(":", 1)[0].strip()
+            if key in drop_set:
+                continue
+        kept.append(line)
+    new_inner = "\n".join(kept)
+    if not new_inner.endswith("\n"):
+        new_inner += "\n"
+    path.write_text(open_marker + new_inner + close_marker + body, encoding="utf-8")
+
+
+def _git_mv(src: Path, dst: Path) -> bool:
+    """git mv with Path.rename fallback. Returns True on success."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src_rel = src.relative_to(VAULT)
+        dst_rel = dst.relative_to(VAULT)
+        subprocess.run(
+            ["git", "-C", str(VAULT), "mv", str(src_rel), str(dst_rel)],
+            check=True, capture_output=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        try:
+            src.rename(dst)
+            return True
+        except OSError:
+            return False
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "bm-server/0.4"
+    server_version = "bm-server/0.5"
 
     def log_message(self, fmt: str, *args) -> None:  # silence default access log
         return
@@ -450,6 +554,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_add(url, title, html_response=False)
         if route == "/delete":
             return self._handle_delete(payload)
+        if route == "/restore":
+            return self._handle_restore(payload)
         return self._json(404, {"error": "not found"})
 
     def _handle_delete(self, payload: dict) -> None:
@@ -457,13 +563,14 @@ class Handler(BaseHTTPRequestHandler):
 
         Body: {"path": "<vault-relative path>"}. Path must resolve inside the
         vault, be an existing .md file, and not already be under `_trash/`.
-        Uses `git mv` when the vault is a git repo, falls back to Path.rename.
+        Adds `trashed_from: <collection>` and `trashed_at: <ISO>` to
+        frontmatter before the move so `/restore` knows where to put it back.
+        Uses `git mv` when the vault is a git repo, falls back to rename.
         Collisions in `_trash/` get a timestamp suffix.
         """
         rel = (payload.get("path") or "").strip()
         if not rel:
             return self._json(400, {"error": "missing path"})
-        # Resolve and validate
         try:
             src = (VAULT / rel).resolve()
             src.relative_to(VAULT)
@@ -476,6 +583,16 @@ class Handler(BaseHTTPRequestHandler):
         rel_parts = src.relative_to(VAULT).parts
         if rel_parts and rel_parts[0] == "_trash":
             return self._json(400, {"error": "already in _trash"})
+        original_collection = rel_parts[0] if rel_parts else ""
+        # Inject trashed_from / trashed_at into frontmatter before moving
+        try:
+            _inject_frontmatter_fields(src, {
+                "trashed_from": original_collection,
+                "trashed_at": iso_now(),
+            })
+        except OSError as e:
+            log(f"POST /delete 500 frontmatter-write {rel} ({e})")
+            return self._json(500, {"error": str(e)})
         # Compute destination (with timestamp suffix on collision)
         trash = VAULT / "_trash"
         trash.mkdir(exist_ok=True)
@@ -487,22 +604,65 @@ class Handler(BaseHTTPRequestHandler):
             while dst.exists():
                 n += 1
                 dst = trash / f"{src.stem}-{ts}-{n}{src.suffix}"
-        # git mv with plain-rename fallback
-        try:
-            src_rel = src.relative_to(VAULT)
-            dst_rel = dst.relative_to(VAULT)
-            subprocess.run(
-                ["git", "-C", str(VAULT), "mv", str(src_rel), str(dst_rel)],
-                check=True, capture_output=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            try:
-                src.rename(dst)
-            except OSError as e:
-                log(f"POST /delete 500 {rel} ({e})")
-                return self._json(500, {"error": str(e)})
+        if not _git_mv(src, dst):
+            log(f"POST /delete 500 {rel} (rename failed)")
+            return self._json(500, {"error": "could not move file"})
         new_rel = str(dst.relative_to(VAULT))
         log(f"POST /delete 200 {rel} -> {new_rel}")
+        return self._json(200, {"ok": True, "new_path": new_rel})
+
+    def _handle_restore(self, payload: dict) -> None:
+        """Restore a `_trash/` file to its original collection (or `_unsorted/`).
+
+        Body: {"path": "_trash/foo.md"}. Reads `trashed_from:` from frontmatter
+        to pick the destination; falls back to `_unsorted/` if missing, empty,
+        or the target dir no longer exists. Strips `trashed_from:` and
+        `trashed_at:` from frontmatter on the way out.
+        """
+        rel = (payload.get("path") or "").strip()
+        if not rel:
+            return self._json(400, {"error": "missing path"})
+        try:
+            src = (VAULT / rel).resolve()
+            src.relative_to(VAULT)
+        except (ValueError, OSError):
+            return self._json(400, {"error": "path escapes vault"})
+        if not src.exists() or not src.is_file() or src.suffix != ".md":
+            return self._json(404, {"error": "file not found"})
+        rel_parts = src.relative_to(VAULT).parts
+        if not rel_parts or rel_parts[0] != "_trash":
+            return self._json(400, {"error": "not in _trash"})
+        # Read trashed_from from frontmatter; default to _unsorted if missing
+        try:
+            text = src.read_text(encoding="utf-8")
+        except OSError as e:
+            return self._json(500, {"error": str(e)})
+        fm, _ = _parse_frontmatter_block(text)
+        trashed_from = (fm or {}).get("trashed_from") or "_unsorted"
+        target_dir = VAULT / trashed_from
+        if trashed_from == "_trash" or not target_dir.is_dir():
+            target_dir = VAULT / "_unsorted"
+            target_dir.mkdir(exist_ok=True)
+        # Strip trashed_from / trashed_at from frontmatter before moving back
+        try:
+            _strip_frontmatter_fields(src, ("trashed_from", "trashed_at"))
+        except OSError as e:
+            log(f"POST /restore 500 frontmatter-strip {rel} ({e})")
+            return self._json(500, {"error": str(e)})
+        # Destination with collision handling
+        dst = target_dir / src.name
+        if dst.exists():
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            dst = target_dir / f"{src.stem}-{ts}{src.suffix}"
+            n = 1
+            while dst.exists():
+                n += 1
+                dst = target_dir / f"{src.stem}-{ts}-{n}{src.suffix}"
+        if not _git_mv(src, dst):
+            log(f"POST /restore 500 {rel} (rename failed)")
+            return self._json(500, {"error": "could not move file"})
+        new_rel = str(dst.relative_to(VAULT))
+        log(f"POST /restore 200 {rel} -> {new_rel}")
         return self._json(200, {"ok": True, "new_path": new_rel})
 
     def _handle_add(self, url: str, title: str | None, *, html_response: bool) -> None:

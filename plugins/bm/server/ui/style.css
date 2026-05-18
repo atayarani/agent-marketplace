@@ -338,6 +338,62 @@ main {
   color: var(--ctp-red);
 }
 
+/* Restore button (mirrors delete button, but green and always visible —
+   the user is in a context where the action is the primary affordance). */
+.bm-restore {
+  position: absolute;
+  top: 14px;
+  right: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--ctp-green);
+  cursor: pointer;
+  font: 16px/1 inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s;
+}
+
+.bm-restore:hover {
+  background: rgba(166, 227, 161, 0.18);   /* green @ 18% */
+}
+
+/* Trash sidebar entry */
+.hierarchy a.system.trash {
+  color: var(--ctp-overlay1);
+}
+
+/* Trash card: dimmed but still scannable */
+.bm-card.trash {
+  opacity: 0.85;
+}
+
+.bm-card.trash .bm-thumb { opacity: 0.6; }
+
+.bm-card.trash .bm-title a {
+  color: var(--ctp-subtext0);
+}
+
+.bm-card.trash .bm-title a:hover {
+  color: var(--accent);
+}
+
+.bm-meta .badge-trashed {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  background: rgba(108, 112, 134, 0.22);   /* overlay0 @ 22% */
+  color: var(--ctp-overlay2);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .bm-thumb {
   width: 160px;
   height: 100px;

@@ -119,6 +119,9 @@
     const tagFilter = state.selectedTags;
     const coll = state.selectedCollection;
     return state.data.bookmarks.filter((b) => {
+      // Trash is excluded from "All bookmarks" — only visible when _trash is
+      // explicitly selected. Deleted things shouldn't pollute the active view.
+      if (coll === null && b.kind === "trash") return false;
       if (coll && b.collection !== coll) return false;
       if (search) {
         // Title + blurb + URL — URL is critical for inbox items that haven't
@@ -137,19 +140,26 @@
 
   function renderTotals() {
     const t = state.data.totals;
-    const inboxLine = t.inbox ? `<span>${t.filed} filed · ${t.inbox} inbox</span>` : `<span>${t.bookmarks} bookmarks</span>`;
-    els.totals.innerHTML =
-      inboxLine +
-      `<span>${t.collections} collections</span>` +
-      `<span>${t.tags} tags</span>` +
-      `<span>${t.hosts} hosts</span>`;
+    const counts = [];
+    if (t.inbox || t.trashed) {
+      const parts = [`${t.filed} filed`];
+      if (t.inbox)   parts.push(`${t.inbox} inbox`);
+      if (t.trashed) parts.push(`${t.trashed} trashed`);
+      counts.push(`<span>${parts.join(" · ")}</span>`);
+    } else {
+      counts.push(`<span>${t.bookmarks} bookmarks</span>`);
+    }
+    counts.push(`<span>${t.collections} collections</span>`);
+    counts.push(`<span>${t.tags} tags</span>`);
+    counts.push(`<span>${t.hosts} hosts</span>`);
+    els.totals.innerHTML = counts.join("");
   }
 
   function renderHierarchy() {
     const colls = state.data.collections;
     const userColls = colls.filter((c) => c.kind === "user");
     const sysColls = colls.filter((c) => c.kind === "system");
-    const total = state.data.totals.bookmarks;
+    const total = state.data.totals.bookmarks;   // already excludes trash
     const sel = state.selectedCollection;
     const link = (name, count, klass = "") => {
       const isActive = (sel === name);
@@ -168,6 +178,7 @@
         let klass = "system";
         if (c.name === "_broken") klass += " broken";
         if (c.name === "_inbox") klass += " inbox";
+        if (c.name === "_trash") klass += " trash";
         parts.push(link(c.name, c.count, klass));
       });
     }
@@ -201,8 +212,12 @@
         `<a class="tag-chip${state.selectedTags.has(t) ? " selected" : ""}" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</a>`
       ).join(" ");
       const isInbox = b.kind === "inbox";
+      const isTrash = b.kind === "trash";
       const inboxBadge = isInbox
         ? `<span class="badge-pending" title="awaiting /bm:enrich">pending${b.source ? " · " + escapeHTML(b.source) : ""}</span>`
+        : "";
+      const trashBadge = isTrash
+        ? `<span class="badge-trashed" title="${escapeHTML('from ' + (b.trashed_from || 'unknown'))}">trashed${b.trashed_from ? " · from " + escapeHTML(b.trashed_from) : ""}</span>`
         : "";
       const importedColl = isInbox && b.imported_collection
         ? `<span class="imported-coll" title="proposed collection from import">→ ${escapeHTML(b.imported_collection)}</span>`
@@ -213,7 +228,10 @@
       const url = escapeHTML(b.url);
       // Title fallback: for inbox without a title, use URL host + path
       const displayTitle = b.title || (isInbox ? (b.host + (b.url ? new URL(b.url).pathname.slice(0, 60) : "")) : b.url);
-      return `<article class="bm-card${isInbox ? " inbox" : ""}">
+      const actionButton = isTrash
+        ? `<button class="bm-restore" data-path="${escapeHTML(b.path || '')}" title="Restore${b.trashed_from ? ' to ' + b.trashed_from : ' to _unsorted'}" aria-label="Restore">↶</button>`
+        : `<button class="bm-delete" data-path="${escapeHTML(b.path || '')}" title="Move to _trash" aria-label="Move to _trash">×</button>`;
+      return `<article class="bm-card${isInbox ? " inbox" : ""}${isTrash ? " trash" : ""}">
   ${thumbnailHTML(b)}
   <div class="bm-body">
     <div class="bm-title"><a href="${url}" target="_blank" rel="noopener">${escapeHTML(displayTitle)}</a></div>
@@ -226,10 +244,11 @@
       ${statusBroken}
       ${needsReview}
       ${inboxBadge}
+      ${trashBadge}
       <span>${escapeHTML(captured)}</span>
     </div>
   </div>
-  <button class="bm-delete" data-path="${escapeHTML(b.path || '')}" title="Move to _trash" aria-label="Move to _trash">×</button>
+  ${actionButton}
 </article>`;
     }).join("");
     els.list.innerHTML = html;
@@ -415,19 +434,22 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      // Optimistic local state update — avoids a full /bookmarks.json refetch
-      if (state.data) {
+      // Optimistic state update: drop the bookmark from totals/collections and
+      // bump the _trash collection's count. (Re-fetching /bookmarks.json would
+      // be more accurate but visibly laggier on a 1845-card vault.)
+      if (state.data && bm) {
         state.data.bookmarks = state.data.bookmarks.filter((x) => x.path !== path);
-        if (bm) {
-          state.data.totals.bookmarks = Math.max(0, state.data.totals.bookmarks - 1);
-          if (bm.kind === "inbox") {
-            state.data.totals.inbox = Math.max(0, (state.data.totals.inbox || 0) - 1);
-          } else {
-            state.data.totals.filed = Math.max(0, (state.data.totals.filed || 0) - 1);
-          }
-          const coll = state.data.collections.find((c) => c.name === bm.collection);
-          if (coll) coll.count = Math.max(0, coll.count - 1);
+        state.data.totals.bookmarks = Math.max(0, state.data.totals.bookmarks - 1);
+        if (bm.kind === "inbox") {
+          state.data.totals.inbox = Math.max(0, (state.data.totals.inbox || 0) - 1);
+        } else {
+          state.data.totals.filed = Math.max(0, (state.data.totals.filed || 0) - 1);
         }
+        state.data.totals.trashed = (state.data.totals.trashed || 0) + 1;
+        const srcColl = state.data.collections.find((c) => c.name === bm.collection);
+        if (srcColl) srcColl.count = Math.max(0, srcColl.count - 1);
+        const trashColl = state.data.collections.find((c) => c.name === "_trash");
+        if (trashColl) trashColl.count += 1;
         render();
       }
     } catch (e) {
@@ -435,12 +457,39 @@
     }
   }
 
-  // Delegate tag-chip + size-row + coll-meta + delete clicks
+  async function handleRestore(path) {
+    if (!path) return;
+    const bm = state.data && state.data.bookmarks.find((x) => x.path === path);
+    try {
+      const res = await fetch("/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // Refetch to learn the restored bookmark's new state (trashed_from
+      // stripped, kind back to filed/inbox, may go to a different collection
+      // than trashed_from if that dir vanished). Cheaper than reconstructing
+      // server-side logic in JS.
+      await loadData();
+    } catch (e) {
+      alert(`Restore failed: ${e.message}`);
+    }
+  }
+
+  // Delegate tag-chip + size-row + coll-meta + delete/restore clicks
   document.addEventListener("click", (e) => {
     const delEl = e.target.closest(".bm-delete");
     if (delEl) {
       e.preventDefault();
       handleDelete(delEl.dataset.path);
+      return;
+    }
+    const restoreEl = e.target.closest(".bm-restore");
+    if (restoreEl) {
+      e.preventDefault();
+      handleRestore(restoreEl.dataset.path);
       return;
     }
     const tagEl = e.target.closest("[data-tag]");
