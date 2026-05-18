@@ -3,11 +3,15 @@
 
 Pure-stdlib HTTP server on 127.0.0.1:9876. Accepts URL captures from the
 browser bookmarklet and writes inbox files into the bookmark vault.
+Also serves the v5 web UI for browsing/visualizing the vault.
 
 Endpoints:
-  POST /add     — JSON body {url, title?}. Writes inbox file.
-  GET  /add     — ?url=&title=. CSP-fallback path; returns auto-closing HTML.
-  GET  /health  — {ok, vault, inbox_count}.
+  POST /add             — JSON body {url, title?}. Writes inbox file.
+  GET  /add             — ?url=&title=. CSP-fallback path; returns auto-closing HTML.
+  GET  /health          — {ok, vault, inbox_count}.
+  GET  /                — Web UI shell (server/ui/index.html).
+  GET  /static/<name>   — Whitelisted UI assets (app.js, style.css).
+  GET  /bookmarks.json  — Full vault data: bookmarks + collections + tag/host aggregates.
 
 Vault discovery: BM_VAULT env var first, then ~/Documents/obsidian/whiskers,
 ~/Documents/whiskers, ~/whiskers. First match where AGENTS.md first line
@@ -23,13 +27,21 @@ import signal
 import subprocess
 import sys
 import urllib.parse
+from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HOST = "127.0.0.1"
 PORT = 9876
+UI_DIR = Path(__file__).resolve().parent / "ui"
+UI_ASSETS = {  # whitelist of /static/<name> → content-type
+    "app.js": "application/javascript; charset=utf-8",
+    "style.css": "text/css; charset=utf-8",
+}
 URL_RE = re.compile(r"^https?://[^\s]+$")
+FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)", re.DOTALL)
+LLM_MARKER = "<!-- /llm-managed -->"
 VAULT_CANDIDATES = [
     os.environ.get("BM_VAULT") or "",
     str(Path.home() / "Documents" / "obsidian" / "whiskers"),
@@ -125,8 +137,158 @@ def write_inbox(url: str, title: str | None) -> tuple[str, Path]:
     return ("saved", path)
 
 
+def _parse_frontmatter_block(text: str) -> tuple[dict, str]:
+    """Return (frontmatter_dict, body). Frontmatter parsed via tiny line scanner
+    (good enough for the bm schema — keeps the daemon stdlib-only)."""
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return {}, ""
+    block, body = m.group(1), m.group(2)
+    fm: dict = {}
+    for line in block.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        # Skip indented continuation lines (e.g. nested proposed_collection.name)
+        if line.startswith((" ", "\t")):
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if not key:
+            continue
+        # Flow-style list: tags: [a, b, c]
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1].strip()
+            if not inner:
+                fm[key] = []
+            else:
+                fm[key] = [_strip_yaml_scalar(part.strip()) for part in inner.split(",")]
+            continue
+        # Empty value (nested block following — we skip nested for our purposes)
+        if not val:
+            continue
+        fm[key] = _strip_yaml_scalar(val)
+    return fm, body
+
+
+def _strip_yaml_scalar(s: str) -> str:
+    if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+        return s[1:-1]
+    return s
+
+
+def _extract_blurb(body: str) -> str:
+    """v1.3+ schema: blurb sits above the `<!-- /llm-managed -->` marker."""
+    if LLM_MARKER in body:
+        return body.partition(LLM_MARKER)[0].strip()
+    return body.strip()
+
+
+def _collect_vault_data(vault: Path) -> dict:
+    """Walk the vault, return the JSON shape consumed by the UI.
+
+    Includes filed bookmarks (user collections + `_unsorted/` + `_broken/`)
+    with normalized frontmatter; aggregates for tags, hosts, and per-collection
+    counts. Sorted: collections by count desc with system dirs at the end;
+    tags and hosts by count desc.
+    """
+    user_collections: list[Path] = []
+    system_collections: list[Path] = []
+    for child in sorted(vault.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name == "outputs":
+            continue
+        if child.name in ("_unsorted", "_broken"):
+            system_collections.append(child)
+            continue
+        if child.name.startswith("_"):
+            continue
+        if not (child / "README.md").exists():
+            continue
+        user_collections.append(child)
+
+    bookmarks: list[dict] = []
+    coll_counts: dict[str, int] = {}
+    tag_counter: Counter = Counter()
+    host_counter: Counter = Counter()
+
+    for coll in user_collections + system_collections:
+        count = 0
+        for p in sorted(coll.glob("*.md")):
+            if p.name == "README.md":
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fm, body = _parse_frontmatter_block(text)
+            if not fm:
+                continue
+            blurb = _extract_blurb(body) or fm.get("blurb") or ""
+            tags_raw = fm.get("tags") or []
+            tags = [str(t) for t in tags_raw if t]
+            url = fm.get("url") or ""
+            host = ""
+            try:
+                host = urllib.parse.urlparse(url).hostname or ""
+                if host.startswith("www."):
+                    host = host[4:]
+            except ValueError:
+                host = ""
+            bookmarks.append({
+                "url": url,
+                "title": fm.get("title") or "",
+                "blurb": blurb,
+                "tags": tags,
+                "collection": coll.name,
+                "captured": fm.get("captured") or "",
+                "enriched": fm.get("enriched") or "",
+                "status": fm.get("status") or "active",
+                "host": host,
+                "needs_review": str(fm.get("needs_review", "")).lower() == "true",
+                "path": str(p.relative_to(vault)),
+            })
+            count += 1
+            tag_counter.update(tags)
+            if host:
+                host_counter[host] += 1
+        coll_counts[coll.name] = count
+
+    collections_out = [
+        {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "user"}
+        for c in user_collections
+    ]
+    collections_out.sort(key=lambda r: (-r["count"], r["name"]))
+    collections_out.extend(
+        {"name": c.name, "count": coll_counts.get(c.name, 0), "kind": "system"}
+        for c in system_collections
+    )
+
+    return {
+        "vault": str(vault),
+        "generated_at": iso_now(),
+        "totals": {
+            "bookmarks": len(bookmarks),
+            "collections": len(user_collections),
+            "tags": len(tag_counter),
+            "hosts": len(host_counter),
+        },
+        "collections": collections_out,
+        "tags": [
+            {"name": t, "count": n} for t, n in tag_counter.most_common()
+        ],
+        "hosts": [
+            {"host": h, "count": n} for h, n in host_counter.most_common()
+        ],
+        "bookmarks": bookmarks,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "bm-server/0.3"
+    server_version = "bm-server/0.4"
 
     def log_message(self, fmt: str, *args) -> None:  # silence default access log
         return
@@ -161,17 +323,57 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/health":
+        path = parsed.path
+        if path == "/health":
             inbox_count = sum(
                 1 for _ in INBOX.glob("*.md") if _.name != ".gitkeep"
             )
             return self._json(200, {"ok": True, "vault": str(VAULT), "inbox_count": inbox_count})
-        if parsed.path == "/add":
+        if path == "/add":
             q = urllib.parse.parse_qs(parsed.query)
             url = (q.get("url", [""])[0] or "").strip()
             title = (q.get("title", [""])[0] or "").strip() or None
             return self._handle_add(url, title, html_response=True)
+        if path == "/":
+            return self._serve_static_file(UI_DIR / "index.html", "text/html; charset=utf-8")
+        if path.startswith("/static/"):
+            name = path[len("/static/"):]
+            ctype = UI_ASSETS.get(name)
+            if not ctype:
+                return self._json(404, {"error": "not found"})
+            return self._serve_static_file(UI_DIR / name, ctype)
+        if path == "/bookmarks.json":
+            return self._serve_bookmarks_json()
         return self._json(404, {"error": "not found"})
+
+    def _serve_static_file(self, path: Path, content_type: str) -> None:
+        try:
+            body = path.read_bytes()
+        except FileNotFoundError:
+            return self._json(404, {"error": f"asset missing: {path.name}"})
+        except OSError as e:
+            return self._json(500, {"error": str(e)})
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_bookmarks_json(self) -> None:
+        try:
+            data = _collect_vault_data(VAULT)
+        except OSError as e:
+            return self._json(500, {"error": str(e)})
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        # No-cache so the UI's refresh button always sees fresh data
+        self.send_header("Cache-Control", "no-store")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:
         if urllib.parse.urlparse(self.path).path != "/add":

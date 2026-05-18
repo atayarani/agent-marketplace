@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>bm — bookmarks</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <header class="brand">
+        <h1>bm</h1>
+        <button id="refresh" title="Reload bookmarks.json">↻</button>
+      </header>
+      <input id="search" type="search" placeholder="search title + blurb" autocomplete="off">
+      <div class="totals" id="totals"></div>
+      <nav class="hierarchy" id="hierarchy" aria-label="Collections"></nav>
+    </aside>
+    <main>
+      <header class="viz-tabs" id="viz-tabs">
+        <button data-viz="list" class="active">List</button>
+        <button data-viz="tags">Tags</button>
+        <button data-viz="sizes">Sizes</button>
+        <button data-viz="timeline">Timeline</button>
+        <button data-viz="hosts">Hosts</button>
+      </header>
+      <section class="active-filters" id="active-filters"></section>
+      <section class="viz-pane" id="viz-pane" hidden></section>
+      <section class="bookmark-list" id="bookmark-list" aria-live="polite"></section>
+    </main>
+  </div>
+  <div class="loading" id="loading">loading…</div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
