@@ -44,6 +44,7 @@ import json
 import re
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -62,6 +63,48 @@ TRANSIENT_EXC: tuple[type[BaseException], ...] = (httpx.ConnectError, httpx.Read
 def die(msg: str, code: int = 1) -> NoReturn:
     print(f"extract.py: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def url_host(url: str) -> str:
+    try:
+        h = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    return h[4:] if h.startswith("www.") else h
+
+
+def find_vault_allowlist(inbox_path: Path) -> set[str]:
+    """Walk up from inbox_path to the vault root, return parsed allowlist hosts.
+
+    A vault is identified by an `AGENTS.md` whose first line contains
+    "Bookmarks Vault". The allowlist lives at `<vault>/web_search_allowlist.yaml`
+    as a YAML list of bare hostnames. Returns an empty set when the vault or
+    allowlist is missing — caller treats that as "no allowlist".
+    """
+    d = inbox_path.parent.resolve()
+    while True:
+        agents = d / "AGENTS.md"
+        if agents.is_file():
+            try:
+                first = agents.read_text(encoding="utf-8").splitlines()[0]
+            except (OSError, IndexError):
+                first = ""
+            if "Bookmarks Vault" in first:
+                f = d / "web_search_allowlist.yaml"
+                if not f.is_file():
+                    return set()
+                allow: set[str] = set()
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    m = re.match(r"^-\s+(.+)$", line)
+                    if m:
+                        allow.add(m.group(1).strip().strip("\"'").lower())
+                return allow
+        if d.parent == d:
+            return set()
+        d = d.parent
 
 
 def read_frontmatter(path: Path) -> dict[str, Any]:
@@ -246,8 +289,7 @@ def main() -> int:
     if resp is None:
         # Graceful degradation: when the inbox file already has a title from
         # the bookmarklet capture, emit a soft-fail record (exit 0) so the
-        # enricher can still classify from url + inbox_title alone. Without
-        # an inbox_title there's nothing to work with — hard fail.
+        # enricher can still classify from url + inbox_title alone.
         if fm["inbox_title"]:
             print(f"extract.py: {err} — degrading to inbox-title fallback", file=sys.stderr)
             out = {
@@ -260,6 +302,33 @@ def main() -> int:
                 "body_text_excerpt": "",
                 "web_search_override": fm["web_search_override"],
                 "inbox_title": fm["inbox_title"],
+            }
+            json.dump(out, sys.stdout, ensure_ascii=False)
+            sys.stdout.write("\n")
+            return 0
+        # Also degrade gracefully when the URL's host is allowlisted for web
+        # search (or `web_search: true` opted in per-bookmark) — downstream
+        # step 5.b.w fills in snippets via Tavily so the enricher has context.
+        # `web_search: false` explicitly suppresses this path.
+        override = fm["web_search_override"]
+        host = url_host(url)
+        if override is True or (
+            override is None and host and host in find_vault_allowlist(path)
+        ):
+            print(
+                f"extract.py: {err} — degrading to web-search fallback (host={host or 'unknown'})",
+                file=sys.stderr,
+            )
+            out = {
+                "url": url,
+                "fetch_status": status,
+                "title": None,
+                "meta_description": None,
+                "og": {},
+                "json_ld": None,
+                "body_text_excerpt": "",
+                "web_search_override": override,
+                "inbox_title": None,
             }
             json.dump(out, sys.stdout, ensure_ascii=False)
             sys.stdout.write("\n")

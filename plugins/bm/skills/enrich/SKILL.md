@@ -154,6 +154,8 @@ rc=$?
 
 **Do NOT** combine streams with `2>&1` — it corrupts the JSON.
 
+`extract.py` soft-fails (exit 0 with an empty extract record) on fetch failure when *any* of these hold: the inbox file has an `inbox_title` (bookmarklet capture), `web_search: true` is set in frontmatter, or the URL's host is in `$vault/web_search_allowlist.yaml`. The downstream 5.b.w step then fills in context. Hard failures (exit 1) still route to `_failed/fetch/` via the branch below.
+
 On `rc != 0`:
 - Compute target path: `$vault/_failed/fetch/$(basename $inbox_file)`.
 - If `$inbox_file` is already in `_failed/fetch/`, leave it in place; otherwise `mv "$inbox_file"` to the target.
