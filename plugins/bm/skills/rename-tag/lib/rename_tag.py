@@ -214,6 +214,8 @@ def main() -> int:
     inbox = collect_inbox(vault)
 
     def has_tag(path: Path, tag: str, fields: tuple[str, ...]) -> bool:
+        # YAML-parse rather than line-regex: matches flow-style
+        # `tags: [a, b]` AND block-style `tags:\n  - a\n  - b` uniformly.
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
@@ -221,12 +223,16 @@ def main() -> int:
         m = FRONTMATTER_RE.match(text)
         if not m:
             return False
-        fm = m.group(2)
+        try:
+            fm = yaml_rt().load(m.group(2))
+        except Exception:
+            return False
+        if not isinstance(fm, dict):
+            return False
         for field in fields:
-            for line in fm.splitlines():
-                if line.startswith(f"{field}:"):
-                    if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(tag)}(?![A-Za-z0-9_-])", line):
-                        return True
+            cur = fm.get(field)
+            if isinstance(cur, list) and any(str(t) == tag for t in cur):
+                return True
         return False
 
     affected_filed = [p for p in filed if has_tag(p, args.from_tag, ("tags", "proposed_tags"))]
