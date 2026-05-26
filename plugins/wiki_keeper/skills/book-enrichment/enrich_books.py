@@ -270,7 +270,13 @@ def hardcover_primary_author(doc: dict) -> str:
 
 
 def search_hardcover(title: str, author: str, token: str) -> list | None:
-    q = f"{title} {author}".strip() if author else title
+    # Title-only query: Hardcover's Typesense search ranks combined
+    # "{title} {author}" worse than title-only — empirically a 2022 fiction
+    # bestseller returned 0 hits with author appended vs 1 hit title-only.
+    # The post-fetch best_match() author-filters via get_authors, so the
+    # author argument is redundant in the query string and kept in the
+    # function signature only for API symmetry with other search_* helpers.
+    q = title
     body = json.dumps({"query": HARDCOVER_QUERY, "variables": {"q": q}}).encode()
     data, _ = http_json(
         "https://api.hardcover.app/v1/graphql",
