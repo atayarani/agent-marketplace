@@ -169,6 +169,41 @@ body {
 
 .totals span { white-space: nowrap; }
 
+/* Sort toggle — applies to every level of the collection tree. */
+.sort-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 14px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sort-toggle .sort-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sort-toggle button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  padding: 1px 7px;
+  font: inherit;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+
+.sort-toggle button:hover { color: var(--fg); }
+
+.sort-toggle button.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
 .hierarchy {
   overflow-y: auto;
   flex: 1;
@@ -215,6 +250,71 @@ body {
 .hierarchy a.system { color: var(--muted); }
 
 .hierarchy a.system.broken { color: var(--broken); }
+
+/* Nested collections render under their parent with a tree glyph + indent.
+ * Depth comes from a `--depth` custom property set inline on the anchor, so
+ * any level of nesting (parent/child/grandchild/...) styles consistently. */
+.hierarchy a.nested {
+  padding-left: calc(16px + var(--depth, 1) * 16px);
+  font-size: 12.5px;
+  color: var(--ctp-subtext1);
+}
+
+.hierarchy a.nested .tree-glyph {
+  display: inline-block;
+  width: 12px;
+  margin-right: 6px;
+  margin-left: -18px;
+  color: var(--ctp-overlay0);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.hierarchy a.nested.active .tree-glyph { color: var(--accent); }
+
+/* Roll-up count next to a parent with nested children. Tells the user
+ * "this parent has +N more bookmarks living one level down." */
+.hierarchy a .nested-roll {
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ctp-overlay1);
+  background: var(--ctp-surface0);
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hierarchy a.active .nested-roll {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+/* Disclosure triangle on parent collections that contain nested children.
+ * Lives inside the anchor but takes its own click via data-toggle-coll —
+ * clicking the triangle toggles expand/collapse; clicking elsewhere on the
+ * row still filters to that collection. */
+.hierarchy a.has-children .disclosure {
+  display: inline-block;
+  width: 12px;
+  margin-right: 4px;
+  margin-left: -8px;
+  color: var(--ctp-overlay0);
+  font-size: 9px;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.hierarchy a.has-children .disclosure:hover {
+  color: var(--accent);
+  background: var(--ctp-surface0);
+}
+
+.hierarchy a.has-children.active .disclosure { color: var(--accent); }
 
 /* --- main pane --- */
 
@@ -495,6 +595,14 @@ main {
   color: var(--fg);
 }
 
+/* On a nested-collection chip, the parent path stays in the chip but dims
+ * out so the eye lands on the leaf — `functional-prints/opengrid/` reads
+ * like a breadcrumb rather than a wall of slashes. */
+.bm-card .bm-meta .coll .coll-parent {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .bm-card .bm-meta .needs-review {
   color: var(--ctp-peach);
   font-weight: 500;
@@ -589,6 +697,16 @@ main {
 
 .size-row .name { font-size: 13px; }
 .size-row:hover .name { color: var(--accent); }
+
+/* Nested rows in the Sizes viz: indent the bar column so nesting reads as
+ * structure, not as a sort artifact. Parent path in .name dims. */
+.size-row.nested {
+  grid-template-columns: 180px 1fr 50px;
+  padding-left: 18px;
+}
+.size-row.nested .name .coll-parent {
+  color: var(--muted);
+}
 .size-row .count { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
 
 .size-row .bar {

@@ -13,7 +13,61 @@
     selectedTags: new Set(),
     viz: "list",
     sidebarCollapsed: localStorage.getItem("bm-sidebar-collapsed") === "1",
+    // Set of parent-collection paths whose nested children are currently
+    // hidden. Default = empty (everything expanded). Toggle persists.
+    collapsedColls: new Set(
+      (localStorage.getItem("bm-collapsed-colls") || "")
+        .split(",").map((s) => s.trim()).filter(Boolean)
+    ),
+    // "count" (default, biggest first) or "alpha" (a-z by leaf name).
+    // Applies recursively to every level of the collection tree.
+    collectionSort: localStorage.getItem("bm-coll-sort") === "alpha" ? "alpha" : "count",
+    // "desc" or "asc". Defaults: count→desc (biggest first), alpha→asc (a-z).
+    // Click the active field to flip; the chosen direction is remembered per
+    // session so flipping count→asc then switching to alpha applies the
+    // alpha default direction (not "asc" from count).
+    collectionSortDir: localStorage.getItem("bm-coll-sort-dir") === "asc" ? "asc" : "desc",
   };
+
+  function persistCollapsedColls() {
+    localStorage.setItem("bm-collapsed-colls", Array.from(state.collapsedColls).join(","));
+  }
+
+  // Comparator for collection-tree nodes. "alpha" sorts by leaf name (the
+  // segment after the last `/`), so depth-2 children alphabetize among their
+  // siblings rather than against the whole path. Direction flips the result.
+  function collComparator() {
+    const flip = state.collectionSortDir === "asc" ? 1 : -1;
+    if (state.collectionSort === "alpha") {
+      // For alpha, "asc" = a-z (natural). Flip swaps to z-a.
+      return (a, b) => {
+        const al = a.name.split("/").pop().toLowerCase();
+        const bl = b.name.split("/").pop().toLowerCase();
+        const c = al.localeCompare(bl);
+        return state.collectionSortDir === "asc" ? c : -c;
+      };
+    }
+    // count: "desc" = biggest first (default). Name is the tiebreaker.
+    return (a, b) => {
+      const c = b.count - a.count;
+      return (c !== 0 ? c : a.name.localeCompare(b.name)) * (state.collectionSortDir === "desc" ? 1 : -1);
+    };
+  }
+
+  function renderSortToggle() {
+    // Active button shows a direction arrow; click active to flip, click
+    // inactive to switch field at that field's default direction.
+    const arrow = (val) => {
+      if (state.collectionSort !== val) return "";
+      return state.collectionSortDir === "desc" ? " ↓" : " ↑";
+    };
+    const opt = (val, label) =>
+      `<button data-sort="${val}" class="${state.collectionSort === val ? "active" : ""}" `
+      + `aria-pressed="${state.collectionSort === val ? "true" : "false"}" `
+      + `title="${state.collectionSort === val ? 'click to flip direction' : `sort by ${label}`}">${label}${arrow(val)}</button>`;
+    els.sortToggle.innerHTML =
+      `<span class="sort-label">Sort:</span>${opt("count", "count")}${opt("alpha", "a–z")}`;
+  }
 
   // ---------- elements ----------
 
@@ -22,6 +76,7 @@
     refresh: $("refresh"),
     search: $("search"),
     totals: $("totals"),
+    sortToggle: $("sort-toggle"),
     hierarchy: $("hierarchy"),
     vizTabs: $("viz-tabs"),
     vizPane: $("viz-pane"),
@@ -161,28 +216,108 @@
     const sysColls = colls.filter((c) => c.kind === "system");
     const total = state.data.totals.bookmarks;   // already excludes trash
     const sel = state.selectedCollection;
-    const link = (name, count, klass = "") => {
-      const isActive = (sel === name);
-      const isAll = (name === null);
-      return `<a class="${klass}${isActive ? " active" : ""}" data-coll="${name === null ? "" : escapeHTML(name)}">`
-        + `<span>${name === null ? "All bookmarks" : escapeHTML(name)}</span>`
-        + `<span class="count">${count}</span></a>`;
-    };
+
+    // Build a tree from the flat collection list. A node is `<parent>/<leaf>`
+    // when parent is also a known user collection — otherwise it's a root.
+    // Skip "orphan" nests (`a/b/` with no `a/` collection) — they fall back
+    // to being roots so they still render somewhere.
+    const userNames = new Set(userColls.map((c) => c.name));
+    const byName = {};
+    for (const c of userColls) byName[c.name] = { name: c.name, count: c.count, children: [] };
+    const roots = [];
+    for (const c of userColls) {
+      const slash = c.name.lastIndexOf("/");
+      const parent = (slash > 0 && userNames.has(c.name.slice(0, slash))) ? c.name.slice(0, slash) : null;
+      if (parent) byName[parent].children.push(byName[c.name]);
+      else roots.push(byName[c.name]);
+    }
+
+    // Recursive descendant-sum for the roll-up pill on collapsed parents.
+    function sumDescendants(node) {
+      let s = 0;
+      for (const c of node.children) s += c.count + sumDescendants(c);
+      return s;
+    }
+
+    // Emit one node + (when expanded) its subtree, indented by depth via a
+    // CSS custom property so arbitrary depth styles consistently.
+    function emit(node, depth, out) {
+      const hasKids = node.children.length > 0;
+      const collapsed = hasKids && state.collapsedColls.has(node.name);
+      const rolled = hasKids ? sumDescendants(node) : 0;
+      const extra = rolled > 0
+        ? `<span class="nested-roll" title="${rolled} more in nested collections">+${rolled}</span>`
+        : "";
+      const disc = hasKids
+        ? `<span class="disclosure" data-toggle-coll="${escapeHTML(node.name)}" role="button" aria-label="${collapsed ? 'expand' : 'collapse'} ${escapeHTML(node.name)}/" aria-expanded="${collapsed ? 'false' : 'true'}">${collapsed ? '▸' : '▾'}</span>`
+        : "";
+      const isActive = sel === node.name;
+      if (depth === 0) {
+        // Top-level: full name, no tree glyph. Has-children → disclosure.
+        const kls = hasKids ? "has-children" : "";
+        out.push(
+          `<a class="${kls}${isActive ? " active" : ""}" data-coll="${escapeHTML(node.name)}">`
+          + `<span class="label">${disc}${escapeHTML(node.name)}</span>`
+          + `<span class="count">${node.count}${extra}</span></a>`
+        );
+      } else {
+        // Nested at any depth: leaf-only label, indent via --depth, tree
+        // glyph only when there's no disclosure (else the disclosure carries
+        // the visual cue for "node in tree").
+        const leaf = node.name.split("/").pop();
+        const tg = hasKids ? "" : `<span class="tree-glyph" aria-hidden="true">└</span>`;
+        const kls = "nested" + (hasKids ? " has-children" : "");
+        out.push(
+          `<a class="${kls}${isActive ? " active" : ""}" data-coll="${escapeHTML(node.name)}" title="${escapeHTML(node.name)}/" style="--depth: ${depth};">`
+          + `<span class="label">${tg}${disc}${escapeHTML(leaf)}</span>`
+          + `<span class="count">${node.count}${extra}</span></a>`
+        );
+      }
+      if (hasKids && !collapsed) {
+        const sorted = [...node.children].sort(cmp);
+        for (const c of sorted) emit(c, depth + 1, out);
+      }
+    }
+
+    // Single comparator shared between roots and all descendant levels.
+    const cmp = collComparator();
+
     const parts = [];
-    parts.push(link(null, total));
+    parts.push(
+      `<a class="${sel === null ? "active" : ""}" data-coll="">`
+      + `<span class="label">All bookmarks</span>`
+      + `<span class="count">${total}</span></a>`
+    );
     parts.push(`<div class="group-label">Collections</div>`);
-    userColls.forEach((c) => parts.push(link(c.name, c.count)));
+    const sortedRoots = [...roots].sort(cmp);
+    for (const root of sortedRoots) emit(root, 0, parts);
     if (sysColls.length) {
       parts.push(`<div class="group-label">System</div>`);
-      sysColls.forEach((c) => {
+      for (const c of sysColls) {
         let klass = "system";
         if (c.name === "_broken") klass += " broken";
         if (c.name === "_inbox") klass += " inbox";
         if (c.name === "_trash") klass += " trash";
-        parts.push(link(c.name, c.count, klass));
-      });
+        const isActive = sel === c.name;
+        parts.push(
+          `<a class="${klass}${isActive ? " active" : ""}" data-coll="${escapeHTML(c.name)}">`
+          + `<span class="label">${escapeHTML(c.name)}</span>`
+          + `<span class="count">${c.count}</span></a>`
+        );
+      }
     }
     els.hierarchy.innerHTML = parts.join("");
+  }
+
+  // Render a collection path for the bookmark-card meta chip: nested paths
+  // get the parent dimmed and the leaf full-strength, so the structure reads
+  // at a glance even before you click into it.
+  function renderCollChip(collection) {
+    const parts = (collection || "").split("/");
+    if (parts.length <= 1) return escapeHTML(collection || "");
+    const parent = parts.slice(0, -1).join("/");
+    const leaf = parts[parts.length - 1];
+    return `<span class="coll-parent">${escapeHTML(parent)}/</span>${escapeHTML(leaf)}`;
   }
 
   function renderActiveFilters() {
@@ -241,7 +376,7 @@
     <div class="bm-url">${url}</div>
     ${b.blurb ? `<div class="bm-blurb">${escapeHTML(b.blurb)}</div>` : ""}
     <div class="bm-meta">
-      <span class="coll" data-coll="${escapeHTML(b.collection)}">${escapeHTML(b.collection)}/</span>
+      <span class="coll" data-coll="${escapeHTML(b.collection)}">${renderCollChip(b.collection)}/</span>
       ${tags}
       ${importedColl}
       ${statusBroken}
@@ -300,10 +435,16 @@
       return;
     }
     const max = colls[0].count;
+    const userNames = new Set(colls.map((c) => c.name));
     const html = colls.map((c) => {
       const pct = (c.count / max * 100).toFixed(1);
-      return `<div class="size-row" data-coll="${escapeHTML(c.name)}">`
-        + `<span class="name">${escapeHTML(c.name)}</span>`
+      const slash = c.name.lastIndexOf("/");
+      const isNested = slash > 0 && userNames.has(c.name.slice(0, slash));
+      const label = isNested
+        ? `<span class="coll-parent">${escapeHTML(c.name.slice(0, slash + 1))}</span>${escapeHTML(c.name.slice(slash + 1))}`
+        : escapeHTML(c.name);
+      return `<div class="size-row${isNested ? " nested" : ""}" data-coll="${escapeHTML(c.name)}">`
+        + `<span class="name">${label}</span>`
         + `<span class="bar"><span class="bar-fill" style="width:${pct}%"></span></span>`
         + `<span class="count">${c.count}</span>`
         + `</div>`;
@@ -374,6 +515,7 @@
   function render() {
     if (!state.data) return;
     renderTotals();
+    renderSortToggle();
     renderHierarchy();
     renderActiveFilters();
     renderList();
@@ -383,6 +525,26 @@
   // ---------- event wiring ----------
 
   els.refresh.addEventListener("click", loadData);
+
+  els.sortToggle.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-sort]");
+    if (!btn) return;
+    const next = btn.dataset.sort;
+    if (next !== "count" && next !== "alpha") return;
+    if (state.collectionSort === next) {
+      // Clicking the active field flips the direction.
+      state.collectionSortDir = state.collectionSortDir === "desc" ? "asc" : "desc";
+    } else {
+      // Switching field: pick that field's natural default direction.
+      // count → desc (biggest first); alpha → asc (a-z).
+      state.collectionSort = next;
+      state.collectionSortDir = next === "count" ? "desc" : "asc";
+    }
+    localStorage.setItem("bm-coll-sort", state.collectionSort);
+    localStorage.setItem("bm-coll-sort-dir", state.collectionSortDir);
+    renderSortToggle();
+    renderHierarchy();
+  });
 
   function toggleSidebar(force) {
     const next = (typeof force === "boolean") ? force : !state.sidebarCollapsed;
@@ -409,6 +571,18 @@
   }, 200));
 
   els.hierarchy.addEventListener("click", (e) => {
+    // Disclosure clicks toggle expand/collapse without changing the active
+    // collection filter — they must short-circuit before the filter path.
+    const disc = e.target.closest("[data-toggle-coll]");
+    if (disc) {
+      e.preventDefault();
+      const name = disc.dataset.toggleColl;
+      if (state.collapsedColls.has(name)) state.collapsedColls.delete(name);
+      else state.collapsedColls.add(name);
+      persistCollapsedColls();
+      renderHierarchy();
+      return;
+    }
     const a = e.target.closest("a[data-coll]");
     if (!a) return;
     e.preventDefault();
