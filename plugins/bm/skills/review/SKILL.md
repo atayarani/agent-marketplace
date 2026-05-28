@@ -1,7 +1,7 @@
 ---
 name: review
 description: "Review the enrichment backlog. --vocab mode: batch-promote frequent imported_tags / imported_collection values from the inbox to tags.yaml + collection dirs (pre-enrich warmup). Default mode: per-bookmark walker for needs_review:true files (post-enrich cleanup). Idempotent. Use when the user wants to resolve proposals after /bm:import or /bm:enrich."
-argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch] [--commit]"
+argument-hint: "[--vocab] [--min-count N] [--top N] [--include-filed] [--collection X] [--limit N] [--refetch] [--auto] [--commit]"
 ---
 
 Two modes:
@@ -53,6 +53,11 @@ From `$ARGUMENTS`:
 - `--collection X` — string (default empty). Restrict the walk to one collection dir (e.g. `--collection cloud-infrastructure`). Other dirs' `needs_review` files are not touched.
 - `--limit N` — integer (default unlimited). Stop after walking N bookmarks. Useful for piloting before committing to a long session.
 - `--refetch` — boolean flag (default false). Re-run `extract.py` on each bookmark and replace its cached blurb (in the body, above the `<!-- /llm-managed -->` marker) before prompting. Rare; the cached blurb is normally trustworthy. User notes below the marker are preserved.
+- `--auto` — boolean flag (default false). Non-interactive fast-drain mode. Silently applies the most permissive safe action for each bookmark, skipping `AskUserQuestion` except where a human decision is irreversible or unavoidable. Rules by case:
+  - **Variant B** (no `proposed_tags`, no `proposed_collection`, only `confidence < 0.4`): force-clear `needs_review` + `confidence`. Equivalent to the user clicking "Confirm placement."
+  - **Variant A, tags-only** (`proposed_tags` non-empty, `proposed_collection` null): auto-promote every proposed tag to `tags.yaml` and merge into `tags`. Equivalent to "Accept all proposed."
+  - **Variant A, collection proposed** (`proposed_collection` non-null): **still prompts** — collection creation / rerouting requires a human decision. `--auto` does not suppress this prompt. Combine with `/bm:enrich --no-prompt` to suppress collection creation prompts during the enrich phase instead.
+  Print one log line per auto-resolved bookmark: `auto: <action> — <title>` (e.g. `auto: force-clear — Smithers AI Orchestration Framework`, `auto: promoted [typescript] — Smithers AI Orchestration Framework`).
 
 **Both modes**
 - `--commit` — boolean flag (default false). After the run completes, auto-commit the touched paths (`tags.yaml` + created/moved collection dirs) with a mode-specific templated message (see section 9). Refuses to commit if the vault has pre-existing staged changes. Push is left to the user.
@@ -192,12 +197,33 @@ extract_out=$("$script" "$bookmark_file" 2>/dev/null) || extract_out=""
 
 If extract succeeded, parse JSON, extract a fresh blurb candidate from `body_text_excerpt` (first ~280 chars), and rewrite `blurb:` via section 3.f's mutation pattern with mode `set-blurb`. Skip silently on failure (cached blurb stays).
 
-**iii. Choose the prompt variant** based on parsed frontmatter:
+**iii. `--auto` short-circuit** (only when `--auto` is set) — evaluate before building any prompt:
+
+```
+has_proposed_tags       = len(parsed.proposed_tags) > 0
+has_proposed_collection = parsed.proposed_collection is not None
+```
+
+- **Variant B** (`not has_proposed_tags and not has_proposed_collection`):
+  - Apply mutation mode `force-clear`.
+  - Print `auto: force-clear — <title>`.
+  - `resolved++`. Continue to next bookmark (skip steps iv–v entirely).
+
+- **Variant A, tags-only** (`has_proposed_tags and not has_proposed_collection`):
+  - Promote each proposed tag to `tags.yaml` via section 3.g's append logic. Append `tags.yaml` to `touched_paths`.
+  - Apply mutation mode `clear-proposals-merge-tags`.
+  - Print `auto: promoted [<tag1>, <tag2>, …] — <title>`.
+  - If mutation returns `"0"` (needs_review cleared) → `resolved++`, else `partially++`. Continue to next bookmark.
+
+- **Variant A, collection proposed** (`has_proposed_collection`, regardless of `has_proposed_tags`):
+  - Do NOT auto-resolve. Fall through to the normal prompt (steps iv–v below). The log line is omitted; the user will see the AskUserQuestion instead.
+
+**iv. Choose the prompt variant** based on parsed frontmatter (reached only when `--auto` is not set, or when `has_proposed_collection` is true):
 
 - **Variant A** (full) — used when `proposed_tags` is non-empty OR `proposed_collection` is non-null.
 - **Variant B** (low-confidence-only) — used when both are empty/null. The only reason this bookmark needs review is `confidence < 0.4`; the user just needs to confirm or move.
 
-**iv. Build the question text** (used by both variants):
+**v. Build the question text** (used by both variants):
 
 ```
 <title>
@@ -216,7 +242,7 @@ proposed_collection: <proposed_collection.name> — <proposed_collection.descrip
 
 Truncate `blurb` to ~240 chars if longer, with `...` suffix.
 
-**v. Call `AskUserQuestion`**:
+**vi. Call `AskUserQuestion`**:
 
 **Variant A options** (4; "Other" auto-added):
 1. `"Accept all proposed"` — `"Promote proposed_tags to tags.yaml + bookmark.tags; create proposed_collection/ + mv bookmark there."`
