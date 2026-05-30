@@ -1,66 +1,132 @@
 ---
-description: Ingest a single source into the wiki — summarize, integrate, log
-argument-hint: "@path/to/source.md | https://example.com/article"
+description: Ingest a source into the vault — captures from any URL, file, or pasted content
+argument-hint: "<url | path | pasted-content>"
 ---
 
-Run the full ingest pipeline for one source. Default to one source per invocation; the user can batch later if they want.
+Capture a single source into the vault. One unified entry point — the source type is detected from the argument shape and dispatched to the right capture path. Under the strict on-demand discipline (AGENTS.md rule 15): ingest writes to `sources/`, `lists/`, and `external/`, and commits to git. It does **not** create or update `wiki/` pages — that's the Query operation.
 
-`$ARGUMENTS` may be an `@`-mention path (Claude Code TAB-completes these against the working directory and pre-loads the file), a bare relative or absolute path, or a URL. Detect which and proceed.
+## Dispatch table
+
+Detect the source type from `$ARGUMENTS`:
+
+| Input shape | Source type | Captures via | Saved to |
+|---|---|---|---|
+| `youtube.com/watch?v=…`, `youtu.be/…`, `youtube.com/shorts/…`, or 11-char video ID | YouTube transcript | `fetch_transcript.py` (yt-dlp fallback) | `sources/web/videos/<slug>.md` |
+| `chatgpt.com/c/…`, `chat.openai.com/share/…` | ChatGPT chat | WebFetch + parse | `external/chats/<slug>.md` + `sources/chats/<slug>.md` |
+| `claude.ai/chat/…`, `claude.ai/share/…` | Claude.ai chat | WebFetch + parse | `external/chats/<slug>.md` + `sources/chats/<slug>.md` |
+| Any other `https://…` URL | Web article | WebFetch | `sources/web/articles/<slug>.md` |
+| Path starting with `/`, `./`, or `@` | Existing local source | Read directly | (no new write — analyze the existing file) |
+| Pasted multi-line text with `**User:**` / `## Prompt:` / `## User` shape | AI chat export | Parse content shape | `external/chats/<slug>.md` + `sources/chats/<slug>.md` |
+| Empty / unrecognized | n/a | Ask the user for a URL or path | n/a |
 
 ## Steps
 
-1. Load the wiki's `AGENTS.md` (or equivalent) and any schemas it points to. Stop if the vault is uninitialized — suggest `/wiki_keeper:init`.
+1. **Load AGENTS.md** and the relevant schema for the detected source type:
+   - YouTube → `system/schemas/youtube-ingestion.md`
+   - Chat → `system/schemas/ai-chat-ingestion.md`
+   - Web article → `system/schemas/source-normalization.md`
+   - Stop if the vault is uninitialized (suggest `/wiki_keeper:init`).
 
-2. Resolve the source from `$ARGUMENTS`:
-   - File path inside the vault: read directly.
-   - URL: ask whether to fetch and save under `sources/raw/` first, or just analyze in place.
-   - Nothing: ask the user which source to process.
+2. **Detect the source type** from `$ARGUMENTS` via the dispatch table.
 
-3. Read the source end to end. Discuss the key takeaways with the user in 3–5 bullets before writing anything. Confirm the framing.
+3. **Capture** the source per the detected type (see per-type sections below).
 
-4. Write a normalized version (if needed) to `sources/normalized/<type>/<slug>.md`. Cleaned, structured — no synthesis, no claims absent from the source.
+4. **Write the source file(s)** with frontmatter per the relevant schema. The schema is the source of truth for frontmatter fields — read it; do not invent fields.
 
-5. **Check `notes/inbox/` for connections.** Spawn the `inbox-connection-finder` subagent with the new normalized source path, the vault root, and the keywords/concepts you extracted in step 3. It will return at most 3 candidate inbox notes that might connect to this source, with soft framing (`strong-match` / `worth-review` / `likely-coincidence`). Surface the candidates to the user. Skip this step only when the inbox is empty or the source is being analyzed in place rather than normalized. The user decides what to do with the candidates — common options:
-   - **Graduate the inbox note** (move to `notes/working/`) and cross-link it from the wiki pages you're about to create or update in step 6.
-   - **Link without graduating** — add a `note_refs:` entry on the new wiki page and a body mention so the inbox note is reachable, but leave it in inbox.
-   - **Ignore** — the candidate is coincidence or not actionable right now.
+5. **Add per-source analysis** in a `## Key content` (or equivalent) section before the transcript / content body. This captures what *this source* says: thesis, key claims, structure, distinctive moves. **Not** cross-source synthesis — that's Query territory.
 
-6. Decide whether to create or update wiki pages. Apply the on-demand rule:
-   - Create a wiki page only if the source produces durable synthesis, is referenced by other pages already, or the user asks for one.
-   - Otherwise leave the source in `sources/normalized/` and stop after step 8.
+6. **Update `lists/` cross-references** if the source cites a book / movie / podcast / article that has an entry in `lists/media/<type>/items/`. Append the new source's wikilink to that item's `source_refs:`. This is provenance bookkeeping, not synthesis.
 
-7. If creating or updating wiki pages:
-   - Identify entities, concepts, and claims worth tracking.
-   - For each: create the page (using the project's template) or amend an existing one.
-   - Cross-link with `[[wikilinks]]`. Preserve provenance — every nontrivial claim cites the source.
-   - Update `wiki/index.md` with new entries.
-   - If the user graduated or linked an inbox note in step 5, fold those connections in here.
+7. **Surface a one-line summary** of what was captured. Do not commit — let the user do that (or batch with later ingests).
 
+## Per-type capture
 
-   ```
-   ## [YYYY-MM-DD] ingest | <Source title>
+### YouTube
 
-   - Summary: <one-paragraph what was added>
-   - Files changed: <bullet list>
-   - Follow-up: <gaps, contradictions, or open questions; "None" if clean>
-   ```
+```bash
+# Metadata sidecar (chapters, duration, channel)
+yt-dlp --skip-download --print "%(title)s|%(channel)s|%(upload_date)s|%(duration_string)s" "<url>"
 
-9. Report a one-line summary plus the files touched.
+# Transcript via the bundled fetch_transcript.py
+"${CLAUDE_PLUGIN_ROOT:-.}/skills/youtube-transcript/fetch_transcript.py" "<url>" --format text > /tmp/<video-id>.transcript.txt
+```
+
+Save the resulting `sources/web/videos/<slug>.md` with frontmatter per `youtube-ingestion.md` and the transcript appended after a `## Transcript` header.
+
+**Caption fallback**: the script handles IP-blocks via yt-dlp's `--write-auto-subs`. Manual `en-US`/`en-GB` captions are higher quality than `en` auto — try `--languages en-US en-GB en` if `--list` shows manual captions available.
+
+### Chat (URL form — ChatGPT, Claude.ai)
+
+For share URLs:
+
+```bash
+# Try WebFetch first
+WebFetch "<url>"
+```
+
+If WebFetch returns the chat content, save as both:
+- `external/chats/<slug>.md` — raw export (the verbatim chat content)
+- `sources/chats/<slug>.md` — processed with frontmatter and `external_ref: "[[external/chats/<slug>]]"` backpointer
+
+If WebFetch returns nothing useful (auth-gated, share link expired), ask the user to paste the export content instead.
+
+### Chat (pasted content form)
+
+When the user pastes a chat export directly:
+- Detect by content shape: `**User:**`, `**Created:**`, `**Link:**` lines (ChatGPT Exporter format), or `## Prompt:` / `## Response:` headers, or `## You` / `## ChatGPT` headers
+- Parse the export structure: title (H1 or `**Title:**`), URL (`**Link:**`), timestamps (`**Created:**` / `**Updated:**` / `**Exported:**`), turns
+- Save the **raw export** verbatim to `external/chats/<slug>.md` (strip only obvious UI noise: browsing citation blocks may be compacted to one-line `[Web browsing: N sources]` summaries)
+- Save the **processed version** to `sources/chats/<slug>.md` with frontmatter per `ai-chat-ingestion.md`, including `external_ref: "[[external/chats/<slug>]]"` and turn summaries
+
+Slug naming for chats: topic-derived, lowercase-hyphenated, **title-only** (not date-prefixed, not provider-prefixed). See `ai-chat-ingestion.md`.
+
+### Web article
+
+```bash
+WebFetch "<url>"
+```
+
+Save as `sources/web/articles/<slug>.md` with frontmatter per `source-normalization.md` (`source_type: article`, `title`, `url`, `author` if extractable, `captured`).
+
+### Local file path
+
+Read the file. If it already has proper frontmatter and lives under `sources/`, no new write — just add per-source analysis if missing. If it's outside `sources/`, ask the user where to file it.
+
+## Per-source analysis
+
+Under strict on-demand: per-source synthesis (what *this source* says) is acceptable in the source body. Cross-source synthesis (this source's pattern matches another source's pattern) is **not** — that's a Query operation.
+
+What belongs in `## Key content`:
+- The source's thesis or claim
+- Structural breakdown (the "3 steps," the "5 tips," the "4 truths")
+- Distinctive moves (worked refactors, framing devices, register signals)
+- Sponsor / CTA (when notable)
+
+What does **not** belong:
+- "This is the Nth video on topic X" cross-channel density observations
+- "This pairs with [other source]" — that's a query-time finding
+- New entity/concept proposals — Query creates wiki pages, not ingest
 
 ## Heavy ingestion
 
-If the source is long (book, paper, multi-hour transcript), spawn the `wiki-archivist` subagent to do the read + extraction in a clean context. Pass it the source path, the project's `AGENTS.md`, and the relevant schemas. Have it return a structured proposal (summary + entity/concept/claim updates) for you to review and apply. This keeps the ingestion bookkeeping out of the user's main session.
+If the source is long (book, paper, multi-hour transcript), delegate the read + extraction to the `wiki-archivist` subagent. Pass it the source path and the relevant schemas. Have it return a structured proposal for the per-source analysis section. The actual write stays in the parent session.
 
-## Inbox connection-finding
+## lists/ cross-linking discipline
 
-Step 5 calls the `inbox-connection-finder` subagent. Two notes:
+When the source mentions a book / movie / podcast / article by name:
+1. Look for `lists/media/<type>/items/<slug>.md`
+2. If exists: append the new source's path to its `source_refs:` array, bump `updated:`
+3. If not exists AND the host frames it as a substantive recommendation: create the list item with `source_refs:` populated
 
-- **It runs in clean context.** It only sees the normalized source, the vault's `notes/inbox/`, and the keywords you pass it. It does not read the wiki, prior conversation, or other ingest logs. That isolation is the point — the subagent's job is to find dormant inbox material that the parent might overlook because it's invested in the new source's synthesis.
-- **At most 3 candidates, with soft framing.** The subagent caps results to keep noise bounded. If it returns "no meaningful overlap," accept that and move on; do not retry with broader keywords just to surface something. Empty results are correct results.
+This is the only structural cross-link ingest performs. See `system/schemas/youtube-ingestion.md` "TBR cross-link discipline" for full rules.
 
 ## Do not
 
-- Edit `sources/raw/`.
-- Bulk-create wiki pages for every entity mentioned. On-demand only.
-- Skip the log entry.
-- Treat existing wiki pages as evidence for new claims — they are synthesis, not source.
+- Create or update `wiki/` pages (entity / concept / claim / index). That's Query, not Ingest.
+- Modify files in `external/` after the initial write — they're treated as service-owned.
+- Bulk-create entity pages for every channel / author / book mentioned. On-demand only.
+- Treat the source's claims as evidence for cross-source patterns. The source is one data point.
+
+## Migration note (2026-05-30)
+
+This skill replaces the prior split between `/wiki_keeper:youtube-transcript`, `/wiki_keeper:ai-chat-source`, and `/wiki_keeper:ingest`. All three are now the same entry point. The two source-type-specific skills are retained as thin redirects to this command.
