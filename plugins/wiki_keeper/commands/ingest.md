@@ -36,7 +36,6 @@ Run the full ingest pipeline for one source. Default to one source per invocatio
    - Update `wiki/index.md` with new entries.
    - If the user graduated or linked an inbox note in step 5, fold those connections in here.
 
-8. Append a log entry to `system/log.md`:
 
    ```
    ## [YYYY-MM-DD] ingest | <Source title>

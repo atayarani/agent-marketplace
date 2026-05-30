@@ -68,7 +68,7 @@ If either is missing, tell the user (`brew install uv` / `brew install yt-dlp`) 
 
 8. **Surface the list to chat** in the output shape below. Lead with the count *and* the chosen category so the user knows how the auto-detection landed.
 
-9. **Do not write any files in the vault.** Do not append to `system/log.md`. Do not update any wiki page. Temp files in `/tmp` are fine and get cleaned up by the OS.
+9. **Do not write any files in the vault.** Do not append to the git log. Do not update any wiki page. Temp files in `/tmp` are fine and get cleaned up by the OS.
 
 ## Categories and auto-detection
 

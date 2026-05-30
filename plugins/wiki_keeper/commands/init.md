@@ -30,7 +30,7 @@ Initialize an LLM-maintained wiki vault. Use sensible defaults but ask before ov
    wiki/claims/                  traceable assertions
    lists/                        workflow state (read/to-read, etc.)
    outputs/                      composed deliverables
-   system/log.md                 append-only chronological log
+   git log                 append-only chronological log
    system/schemas/               operation-specific schemas
    system/templates/             page templates
    AGENTS.md                     vault instructions for agents
@@ -43,7 +43,7 @@ Initialize an LLM-maintained wiki vault. Use sensible defaults but ask before ov
 
    - `AGENTS.md`: short instructions naming the directory model, the immutability rule for `sources/raw/`, the on-demand wiki promotion rule, the index/log discipline, and a list of schemas to read for specific operations.
    - `wiki/index.md`: skeleton with the role headings, no entries yet.
-   - `system/log.md`: file header plus a single seed entry: `## [YYYY-MM-DD] scaffold | Initialize vault`.
+   - the git log: file header plus a single seed entry: `## [YYYY-MM-DD] scaffold | Initialize vault`.
    - `system/schemas/repository-model.md`: directory layer purposes.
    - `system/schemas/provenance.md`: how nontrivial claims cite back to sources.
    - `system/schemas/maintenance.md`: how audit + correction cycles work.
@@ -52,7 +52,7 @@ Initialize an LLM-maintained wiki vault. Use sensible defaults but ask before ov
 
 5. Optionally `git init` if the directory is not already a repo. Add a `.gitignore` covering `.obsidian/themes/`, `.obsidian/plugins/*/main.js`, `.obsidian/plugins/*/styles.css`, `.obsidian/plugins/*/data.json`, `.obsidian/graph.json`, `.obsidian/appearance.json` (these are bulky/secret-prone).
 
-6. Append a seed entry to `system/log.md` and report what was created.
+6. Append a seed entry to the git log and report what was created.
 
 ## Notes
 

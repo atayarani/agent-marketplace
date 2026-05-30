@@ -38,14 +38,14 @@ If no such file exists, the vault has not been initialized. Suggest `/wiki_keepe
 9. Do not treat generated wiki text as raw evidence when ingesting future sources.
 10. Outputs cite or link back to sources, notes, concepts, or claims.
 11. Maintain `wiki/index.md` as the content-oriented index.
-12. Maintain `system/log.md` as an append-only chronological log. Append entries; do not rewrite history.
+12. Maintain the git log as an append-only chronological log. Append entries; do not rewrite history.
 13. For substantial changes, prefer small, reviewable edits over broad rewrites.
 
 ## Index and log conventions
 
 **`wiki/index.md`** — content-oriented. Each wiki page listed once with a one-line summary, grouped by role (Concepts / Claims / Entities / Outputs). Update on every ingest or new page. When answering a query, read the index first.
 
-**`system/log.md`** — chronological. Append entries with a consistent header so the log is greppable:
+**the git log** — chronological. Append entries with a consistent header so the log is greppable:
 
 ```
 ## [YYYY-MM-DD] action | Title
@@ -55,7 +55,7 @@ If no such file exists, the vault has not been initialized. Suggest `/wiki_keepe
 - Follow-up:
 ```
 
-`action` is one of: `ingest`, `query`, `audit`, `correction`, `restructure`, `policy`, `cleanup`. The header format means `grep "^## \[" system/log.md | tail -10` always gives a clean recent timeline.
+`action` is one of: `ingest`, `query`, `audit`, `correction`, `restructure`, `policy`, `cleanup`. The header format means `grep "^## \[" git log | tail -10` always gives a clean recent timeline.
 
 ## Filing-back
 
