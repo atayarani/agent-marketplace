@@ -1,41 +1,60 @@
 ---
-description: Query the wiki and optionally file the answer back as a new page
-argument-hint: "<question> — use @page.md inside to pin a specific wiki page"
+description: Query the vault — synthesize an answer from sources, optionally file it back to wiki
+argument-hint: "<question> — use @path inside to pin a specific source or page"
 ---
 
-Answer a question against the wiki, then decide whether the answer is durable enough to file back.
+Answer a question against the vault, then decide whether the answer is durable enough to file back as a wiki page. Query is the operation that creates `wiki/` pages — ingest never does.
 
-`$ARGUMENTS` is free-text. Users may embed `@`-mention paths inside the question to pin specific wiki pages, sources, or notes into context — Claude Code TAB-completes those against the working directory and pre-loads them. Treat any `@`-resolved files as authoritative starting points for the answer.
+`$ARGUMENTS` is free-text. Users may embed `@`-mention paths inside the question to pin specific files into context — TAB-completion against the working directory pre-loads them. Treat any `@`-resolved files as authoritative starting points.
+
+## Strict mode is the default
+
+**Query against the vault only — no web search, no external lookups.** This is the default discipline (2026-05-31). A valid result is *"the vault doesn't know"* — that's load-bearing signal about what to ingest next.
+
+Reach for external sources only when:
+- The user explicitly says so (*"check this against the web"*, *"look this up online"*)
+- The user passes a flag like `--external` or `--web`
+- The vault is silent AND the user has indicated they want a best-effort answer anyway
+
+When you do go external, be transparent: tag claims with their source (`[vault]` vs `[web fetched <date>]`). Vault claims have provenance and audit history; web fetches don't.
 
 ## Steps
 
 1. Load `AGENTS.md` and any schemas it points to. If uninitialized, suggest `/wiki_keeper:init` and stop.
 
-2. Read `wiki/index.md`. Identify candidate pages from titles and one-line summaries.
+2. **Search the vault** using `qmd` (`mcp__plugin_qmd_qmd__query` with lex/vec/hyde sub-queries) plus direct reads of `@`-mentioned paths. Hit the relevant scopes:
+   - `wiki/` — if any wiki pages exist that answer the question
+   - `sources/` — the canonical content layer (web videos, articles, chats, readwise highlights)
+   - `lists/` — for media list items, TBR, etc.
+   - `notes/` — for first-party human-authored thinking
 
-3. Read the candidate pages. Drill into linked pages as needed. Fall back to `sources/normalized/` only when the wiki is silent on the question. Use `sources/raw/` only as a last resort and only to read.
+3. **Drill into matched files**. Read them, follow wikilinks, build the answer from cited claims.
 
-4. Answer the question. Cite every nontrivial claim with a wikilink to the wiki page or source it rests on. If evidence is thin, say so explicitly — do not invent synthesis.
+4. **Answer the question**. Cite every nontrivial claim with a wikilink to the source it rests on. If evidence is thin, say so explicitly — do not invent synthesis. If the vault is silent on a key part of the question, flag it as a **data-gap** rather than reaching for the web.
 
-5. Decide whether the answer should be filed back:
-   - **File it** if the answer produced a new comparison, a clarified concept, a synthesized claim, or a useful framework — anything the user is likely to want to retrieve later.
+5. **Decide whether to file back**:
+   - **File it** if the answer produced new synthesis: a comparison, clarified concept, traced claim, framework distillation — anything the user is likely to want to retrieve later.
    - **Do not file** if the answer was a quick lookup that didn't generate new structure.
 
-6. If filing back:
-   - Pick the right home: a new `wiki/concepts/` page for a framework or comparison; a new `wiki/claims/` page for a specific assertion; an amendment to an existing entity for biographical updates.
-   - Use the project's template if one exists.
+6. **If filing back**:
+   - Pick the right home:
+     - `wiki/concepts/<slug>.md` — framework, register, comparison, abstract idea spanning multiple sources
+     - `wiki/entities/people/<slug>.md` — channel/author/cited individual with ≥2 vault sources (per AGENTS.md rule 16, no per-work entity pages)
+     - `wiki/entities/tools/<slug>.md` — software/method cited across ≥2 sources
+     - `wiki/claims/<slug>.md` — specific traceable assertion
    - Cross-link from related pages so the new page is reachable.
-   - Update `wiki/index.md`.
-   - Append a log entry: `## [YYYY-MM-DD] query | <question topic>` with `Files changed` listing the new or amended page.
+   - If a `wiki/index.md` exists and is current, add an entry there too.
 
-7. Return the answer to the user and (if filed) the path of the new wiki page.
+7. **Return the answer** to the user, including the path of any newly filed wiki page.
 
 ## Output format options
 
-When the user wants a non-prose answer — a comparison table, a slide deck (Marp), a chart, a canvas — produce that, and still file a markdown summary back to the wiki with a link to the artifact. The artifact is ephemeral; the synthesis is not.
+When the user wants a non-prose answer — a comparison table, a slide deck (Marp), a chart, a canvas — produce that, and still file a markdown summary back to the wiki with a link to the artifact. The artifact is ephemeral; the synthesis is durable.
 
 ## Do not
 
+- Reach for the web by default — strict mode is the default. The user can opt in to external lookups explicitly.
 - Treat `wiki/` text as evidence for claims that aren't traceable to a source.
 - Omit citations.
 - File answers that are just lookups — that bloats the wiki without compounding.
+- File a per-work entity page (per AGENTS.md rule 16, those are never created).
