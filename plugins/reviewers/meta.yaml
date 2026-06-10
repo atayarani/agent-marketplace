@@ -1,0 +1,6 @@
+# Canonical source for this plugin. Adapters (bin/adapters/<harness>.sh) read
+# this to generate each harness's manifest. Never hand-author generated manifests.
+name: reviewers
+version: 0.2.2
+description: Parallel PR review with a selectable team of reviewers.
+# Installs on all harnesses (default). Has agents/ -> subagents auto-detected.

@@ -1,0 +1,1 @@
+../../plugins/wiki_keeper/commands/youtube-tech-list.md

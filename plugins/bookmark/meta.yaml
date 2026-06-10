@@ -1,0 +1,11 @@
+# Canonical source for this plugin. Adapters (bin/adapters/<harness>.sh) read
+# this to generate each harness's manifest. Never hand-author generated manifests.
+name: bookmark
+version: 1.5.0
+display_name: bookmark
+description: |-
+  Long-form alias for the `bm` plugin (Raindrop-style bookmark manager). All commands and skills are shared via symlink; /bookmark:* and /bm:* are interchangeable.
+# bookmark's agents/commands/server/skills are symlinks into ../bm. The Gemini
+# adapter skips alias plugins (avoids the bm == bookmark name collision); Claude,
+# Codex, and Pi still install it (its symlinks resolve to bm content).
+alias_of: bm

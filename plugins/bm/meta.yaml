@@ -1,0 +1,11 @@
+# Canonical source for this plugin. Adapters (bin/adapters/<harness>.sh) read
+# this to generate each harness's manifest. Never hand-author generated manifests.
+name: bm
+version: 1.8.0
+display_name: bm
+description: |-
+  Raindrop-style bookmark manager: capture, enrich, and file URLs into a plain-text vault.
+# Excluded from Gemini: bm's server/ daemon can't resolve through Gemini's per-kind
+# symlink farm, and bm/audit would collide with wiki_keeper/audit in Gemini's flat
+# namespace. This one field resolves both Gemini problems at once.
+harnesses: [claude, codex, pi]
