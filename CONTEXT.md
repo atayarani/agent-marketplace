@@ -1,6 +1,6 @@
 # CONTEXT — cross-harness adapter refactor (resume handoff)
 
-**Last updated:** 2026-06-10 · **HEAD at handoff:** `b1dba34` on `main` (pushed).
+**Last updated:** 2026-06-10 · **State:** Phases 0–3 + 2b complete on `main` (pushed).
 **Companion docs:** `REDESIGN-PLAN.md` (the full plan), `AGENTS.md` (still describes the
 *old* model — not yet rewritten; see Phase 5).
 
@@ -17,13 +17,13 @@ Goal: replace hand-authored, per-harness manifests with **one canonical source p
 (`plugins/<name>/meta.yaml`) + **one adapter per harness** (`bin/adapters/<h>.sh`) driven by a
 `Makefile`. Generated manifests become gitignored build artifacts (that flip happens in Phase 5).
 
-- **Done & committed (Phases 0–3):** meta.yaml authoring, Claude/Codex/Gemini/Pi adapters,
-  shared `lib.sh`, `Makefile`, `sync-gemini.sh` retired to a shim.
-- **Remaining:** **Phase 2b** (Gemini adapter redesign — the current one targets a stale Gemini
-  model), **Phase 4** (Codex hook fixes + Gemini/Pi hooks + Pi agent wiring), **Phase 5**
-  (gitignore-flip + rewrite `AGENTS.md`/`README.md` + add `HARNESS-NOTES.md`).
+- **Done & committed (Phases 0–3 + 2b):** meta.yaml authoring, Claude/Codex/Gemini/Pi adapters,
+  shared `lib.sh`, `Makefile`, `sync-gemini.sh` shim, and the Gemini adapter rebuilt for the real
+  0.45 extension model (commands + skills verified registered).
+- **Remaining:** **Phase 4** (Codex hook fixes + Gemini/Pi hooks + cross-harness agent definitions),
+  **Phase 5** (gitignore-flip + rewrite `AGENTS.md`/`README.md` + add `HARNESS-NOTES.md`).
 - **All four CLIs are installed on this dev machine** (the plan wrongly assumed Codex/Gemini
-  were absent): Claude 2.1.170, codex-cli 0.139.0, gemini 0.45.2, pi 0.79.0.
+  were absent): Claude 2.1.170, codex-cli 0.139.0, gemini 0.45.3, pi 0.79.0.
 
 ---
 
@@ -35,8 +35,8 @@ Goal: replace hand-authored, per-harness manifests with **one canonical source p
 | 1 | `claude.sh` + `Makefile` | ✅ done, verified live (hook fires/blocks via `--plugin-dir`) |
 | 2 | `codex.sh` + `gemini.sh` (install mechanism) | ✅ done, verified live in sandbox homes |
 | 3 | `pi.sh` (skills + commands→prompt-templates) | ✅ done, verified live |
-| **2b** | **Gemini adapter redesign for modern Gemini** | ⬜ TODO (current `gemini.sh` largely ignored by Gemini 0.45.2) |
-| **4** | **Cross-harness hooks + Pi agent wiring** | ⬜ TODO (2 verified Codex defects; Gemini hooks now feasible; Pi agents unverified) |
+| **2b** | **Gemini adapter redesign (real 0.45 model)** | ✅ done, verified live (10 commands + 11 skills register; `gemini extensions validate` passes) |
+| **4** | **Cross-harness hooks + agent definitions** | ⬜ TODO (2 verified Codex defects; Gemini hooks feasible; agent defs non-portable) |
 | **5** | **Flip generated artifacts to gitignored + rewrite docs** | ⬜ TODO |
 
 ---
@@ -116,28 +116,32 @@ version lives; every manifest is projected from it.
 - Verified working: `/reviewers:deep-review-staged` resolves, loads `SKILL.md`, runs; hook
   block+allow both fire.
 
-### Gemini — `gemini` 0.45.2  (INSTALLED — plan said it wasn't)
-- Subcommands: `gemini extensions link "<repo>"` (live symlink) / `uninstall agent-marketplace` /
-  `validate "<path>"` / `list`. `link` has **two interactive trust prompts** ([Y/n] workspace-trust
-  + third-party warning) — feed `yes |` headlessly, or use `--skip-trust` / `GEMINI_CLI_TRUST_WORKSPACE=true` for `-p`.
+### Gemini — `gemini` 0.45.3  (INSTALLED — plan said it wasn't)
+- Subcommands: `gemini extensions link "<repo>/gemini"` (live symlink of the extension dir) /
+  `uninstall agent-marketplace` / `validate "<path>"` / `list`. `link` has **two interactive trust
+  prompts** — feed `yes |`, or `--skip-trust` / `GEMINI_CLI_TRUST_WORKSPACE=true` for `-p`.
 - **Sandbox handle = `HOME`**; seed `cp ~/.gemini/{oauth_creds,google_accounts,settings,state}.json $HOME/.gemini/`
-  and `printf '{"<abs-repo-path>":"TRUST_FOLDER"}' > $HOME/.gemini/trustedFolders.json`.
-  Headless run = `gemini -p "..." --skip-trust --approval-mode yolo`.
-- **The current `gemini.sh` targets a STALE model → Phase 2b.** Ground truth from
-  `gemini extensions new <path> <template>` (templates: `custom-commands exclude-tools hooks
-  mcp-server policies skills themes-example`):
-  - **Commands are TOML** (`prompt="""...{{args}}...!{shell}"""`), auto-discovered at the extension
-    **root** `commands/`. Our `.md` farm via a `"commands"` path-key **does not load as commands.**
-  - **Skills are `SKILL.md`** (identical to Claude), auto-discovered at root `skills/`. Portable —
-    just need to live at root, not behind a path-key.
-  - **Gemini HAS hooks** (plan said it doesn't): `hooks/hooks.json` at root, *Claude-like* structure
-    (`{"hooks":{Event:[{"hooks":[{"type":"command","command":"... ${extensionPath} ..."}]}]}}`),
-    runs shell. So our reviewers/wiki_keeper hooks are **feasible** on Gemini. Events: `SessionStart`
-    confirmed; `PreToolUse`/`UserPromptSubmit` + block protocol = TO-VERIFY.
-  - **`subagents` is not a Gemini concept** (no template). Drop it for Gemini.
-  - `contextFileName: AGENTS.md` **works** (confirmed at link).
-- Verified working today: `link`/`uninstall`/`validate` round-trip; a `/highlights` probe returned
-  wiki_keeper-specific output (some content reaches the model via context/skills).
+  and `printf '{"<abs-path>":"TRUST_FOLDER"}' > $HOME/.gemini/trustedFolders.json`.
+- **Extension model** (verified from bundled docs at `.../gemini-cli/.../bundle/docs/{extensions,cli,hooks}/`
+  + live): an extension is a self-contained dir with `gemini-extension.json` at its root,
+  **auto-discovering at the root** (no manifest path-keys):
+  - `commands/<sub>/<cmd>.toml` → `/<sub>:<cmd>` (TOML `prompt`/`description`; arg token is
+    `{{args}}`, NOT `$ARGUMENTS`; `!{shell}` and `@{file}` injection)
+  - `skills/<name>/SKILL.md` → `<name>` (identical to Claude)
+  - `agents/*.md` → sub-agents (**PREVIEW**, different definition format)
+  - `hooks/hooks.json` (Claude-like; `${extensionPath}`) — **Gemini HAS hooks** (Phase 4)
+  - `contextFileName` loads a file FROM the extension dir.
+- **`gemini.sh` (Phase 2b, DONE) generates `gemini/` as that extension** and links it:
+  `skills/<skill>` (symlinks), `commands/<plugin>/<cmd>.toml` (converted from Claude `.md`,
+  `$ARGUMENTS`→`{{args}}`), `agents/<agent>.md` (symlinks), `AGENTS.md` (→ `../AGENTS.md`).
+  bm + bookmark skipped.
+- **Verified live:** `gemini extensions validate` passes; `/commands list` → 10 commands namespaced
+  `/<plugin>:<cmd>` with descriptions; `/skills list` → 11 skills with descriptions; context loads.
+  (Live command *execution* hit a transient Google `429 no capacity`; registration proven via the
+  model-free `/commands list` / `/skills list` builtins.)
+- **GAP → Phase 4:** Claude-format `agents/*.md` do NOT register as Gemini sub-agents (`/agents list`
+  shows only built-ins) — sub-agents are preview with a different format. Files are bundled (the
+  deep-review skill can still read them) but inert as native sub-agents.
 
 ### Pi — `pi` 0.79.0  (INSTALLED)
 - **Sandbox handle = `HOME`** (Pi keys discovery off `$HOME`; `PREFIX` is NOT used by `pi.sh`).
@@ -165,27 +169,29 @@ version lives; every manifest is projected from it.
 
 ## What's left — detailed & actionable
 
-### Phase 2b — Gemini adapter redesign (biggest correctness gap)
-Rebuild `gemini.sh` to emit an extension matching Gemini 0.45.2:
-- root `skills/<name>/SKILL.md` (portable as-is — symlink or copy),
-- root `commands/*.toml` **converted** from Claude `commands/*.md` (`prompt="""<body>"""`; map
-  `$ARGUMENTS`/`$1`; `!{cmd}` for shell injection),
-- root `hooks/hooks.json` (Gemini event names; `${extensionPath}`),
-- keep `contextFileName: AGENTS.md`; drop `subagents`; keep bm/alias skips.
-Decide: a real generated extension dir vs a root-level farm. Re-validate with
-`gemini extensions validate` + a `-p` command invocation.
+### Phase 2b — Gemini adapter redesign — ✅ DONE
+`gemini.sh` rewritten; `gemini/` is now a real 0.45 extension (root `skills/` symlinks,
+`commands/<plugin>/<cmd>.toml` converted from `.md`, `agents/` symlinks, `AGENTS.md` context,
+minimal manifest). Verified: validator passes; 10 commands + 11 skills register with descriptions.
+The one remaining sub-item (Claude agents don't register as Gemini sub-agents — preview/different
+format) is folded into Phase 4. Loose end for Phase 5: root `gemini-extension.json` is now orphaned
+(manifest moved into `gemini/`); the gitignore list already covers it.
 
-### Phase 4 — hooks + Pi agents
+### Phase 4 — hooks + agent definitions
 - **Codex defect 1 (easy):** self-gate `plugins/reviewers/hooks/scripts/prompt_require_diff.sh` on
   the prompt containing `deep-review` (don't rely on the matcher). Re-verify on Codex *and* Claude.
 - **Codex defect 2 (hard):** make `wiki_keeper` protection fire on Codex `apply_patch` + shell writes
   (no `tool_input.file_path`). Investigate Codex hook events/tool-name mapping; block-verify.
-- **Gemini hooks:** wire `hooks/hooks.json` (feasible now). Verify `PreToolUse`/`UserPromptSubmit`
-  support + `{decision:block}` protocol. Depends on Phase 2b.
+- **Gemini hooks:** add `gemini/hooks/hooks.json` in `gemini.sh build` (extension structure now
+  exists, Phase 2b). Verify `PreToolUse`/`UserPromptSubmit` support + `{decision:block}` protocol.
+  Docs at `bundle/docs/hooks/`.
 - **Pi hooks:** check `extensions.md` — does Pi have a `hooks.json`-style mechanism or only TS-callback
   extensions? Original plan = TS bridge `bin/adapters/pi/hook-bridge/index.ts` mapping
   `PreToolUse→tool_call`, `UserPromptSubmit→input`.
-- **Pi agents:** resolve `pi-subagents` config — where/how it reads agent personas; wire `agents/*.md`.
+- **Agent definitions (cross-harness, non-portable):** Claude `agents/*.md` are native only on Claude.
+  Pi → resolve `pi-subagents` config (how/where it reads personas). Gemini → sub-agents are preview
+  with a different format (Claude `.md` don't register — verified; docs `bundle/docs/core/subagents.md`).
+  Codex → TBD. Blocks reviewers' persona-spawning everywhere but Claude.
 - **Every hook needs BLOCK verification** (silent-open is the headline risk).
 
 ### Phase 5 — flip + docs
@@ -219,8 +225,10 @@ bin/adapters/codex.sh uninstall
 rm -rf /tmp/gh; mkdir -p /tmp/gh/.gemini
 cp ~/.gemini/{oauth_creds,google_accounts,settings,state}.json /tmp/gh/.gemini/
 printf '{"%s":"TRUST_FOLDER"}' "$PWD" > /tmp/gh/.gemini/trustedFolders.json
-yes | HOME=/tmp/gh gemini extensions link "$PWD"
+bin/adapters/gemini.sh build                                  # generates the gemini/ extension
+yes | HOME=/tmp/gh gemini extensions link "$PWD/gemini"       # link the generated extension dir
 HOME=/tmp/gh gemini extensions list
+HOME=/tmp/gh gemini -p "/commands list" --skip-trust          # model-free: confirms commands register
 HOME=/tmp/gh gemini extensions uninstall agent-marketplace
 
 # PI — sandboxed HOME, seeded auth (PREFIX does NOT work for Pi)
@@ -238,8 +246,11 @@ All four CLIs run real model calls — keep test prompts tiny.
 ## Open questions / risks
 - **Silent-open hooks on Codex** (and unverified on Gemini/Pi) — the headline correctness risk;
   only block-verification settles it.
-- **Gemini command format** — `.md` farm doesn't load; needs `.toml` conversion (Phase 2b).
-- **Pi `pi-subagents` agent format** — unverified; reviewers subagents on Pi blocked on it.
+- **Agent definitions are non-portable** — Claude `agents/*.md` are native only on Claude; Gemini
+  sub-agents (preview) use a different format and don't register (verified); Pi `pi-subagents` format
+  unverified. Blocks reviewers' parallel-reviewer spawning off-Claude (Phase 4).
+- **Live command execution on Gemini unverified** — blocked by a transient Google `429 no capacity`;
+  registration + namespacing verified via the model-free `/commands list` builtin.
 - **Generated artifacts are still tracked** — Phase 5 flips them; until then `git status` after a
   build may show manifest changes (expected).
 - `bm` is intentionally excluded from Gemini (`harnesses: [claude, codex, pi]`) — documented, not a bug.

@@ -1,1 +1,0 @@
-../../plugins/reviewers/commands/deep-review-pr.md

@@ -1,1 +1,0 @@
-../../plugins/wiki_keeper/commands/enrich-books.md
