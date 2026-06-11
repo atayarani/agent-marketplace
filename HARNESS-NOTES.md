@@ -58,6 +58,11 @@ flagged.) Update this file when you change cross-harness behaviour.
     via `apply_patch` (a patch string in `tool_input.command`) **or** a shell
     redirect, neither carrying `tool_input.file_path`. **Shell writes are
     fundamentally unprotectable via tool hooks.** Documented limitation.
+  - Investigated the `apply_patch` path empirically (a throwaway probe plugin with
+    `PreToolUse` matchers for `apply_patch`/`.*`): could **not** get Codex to fire a
+    fresh plugin's hooks in a sandbox — not even `UserPromptSubmit` — even with
+    `--dangerously-bypass-hook-trust`. Codex's plugin-hook trust/loading model is
+    opaque enough that reliable tool-interception isn't achievable here. **Not pursued.**
 
 ## Gemini CLI (0.45.3)
 
