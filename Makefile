@@ -7,9 +7,10 @@
 SHELL     := /bin/bash
 HARNESSES := claude codex gemini pi
 
-.PHONY: help build install validate clean \
-        $(addprefix install-,$(HARNESSES)) \
-        $(addprefix uninstall-,$(HARNESSES))
+# install-%/uninstall-% are deliberately NOT in .PHONY: in GNU make 3.81 a .PHONY
+# membership creates a recipe-less rule that shadows the pattern rule ("Nothing to
+# be done"). No files named install-<harness> exist, so the pattern rules always run.
+.PHONY: help build install validate clean
 
 help:
 	@echo "agent-marketplace — canonical content + per-harness adapters"
@@ -22,6 +23,9 @@ help:
 	@echo "  validate             build, then run available manifest validators"
 	@echo "  clean                Remove generated manifest artifacts from the working tree"
 	@echo
+	@echo "Select plugins:           make install-claude PLUGIN=reviewers"
+	@echo "  (comma-separated)       make install-pi PLUGIN=reviewers,wiki_keeper"
+	@echo "  (default = all; Gemini ignores PLUGIN — one extension per repo)"
 	@echo "Sandboxed dry run:        PREFIX=/tmp/mp make install-claude"
 	@echo "Copy instead of symlink:  COPY=1 make install-claude"
 
@@ -41,11 +45,11 @@ install:
 
 install-%:
 	@test -x bin/adapters/$*.sh || { echo "make: no adapter bin/adapters/$*.sh (not built yet)"; exit 1; }
-	@bin/adapters/$*.sh install
+	@bin/adapters/$*.sh install "$(PLUGIN)"
 
 uninstall-%:
 	@test -x bin/adapters/$*.sh || { echo "make: no adapter bin/adapters/$*.sh"; exit 1; }
-	@bin/adapters/$*.sh uninstall
+	@bin/adapters/$*.sh uninstall "$(PLUGIN)"
 
 validate: build
 	@command -v claude >/dev/null 2>&1 || { echo "validate: 'claude' CLI not found; skipping"; exit 0; }

@@ -46,7 +46,12 @@ Makefile               help / build / install[-<h>] / uninstall-<h> / clean / va
 
 `meta.yaml` + canonical content is the input. Each adapter has the same contract:
 
-    bin/adapters/<harness>.sh <build|install|uninstall> [plugin]
+    bin/adapters/<harness>.sh <build|install|uninstall> [plugin(s)]
+
+`[plugin(s)]` is optional — omit for all, or pass one name or a comma-separated
+list (e.g. `reviewers,wiki_keeper`) to scope the command. Via make:
+`make install-<harness> PLUGIN=reviewers,wiki_keeper`. (Gemini ignores it — one
+extension per repo; use `harnesses:` in meta.yaml to scope Gemini.)
 
 - **build** — pure function of the working tree → writes that harness's
   manifest projection(s). No `$HOME` writes.

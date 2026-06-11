@@ -38,6 +38,19 @@ make install-pi         # symlinks skills + prompt-templates into ~/.pi/agent/
 make install            # every harness that has an adapter
 ```
 
+Install (or uninstall) only some plugins with `PLUGIN=` — a single name or a
+comma-separated list (default is all):
+
+```bash
+make install-claude PLUGIN=reviewers
+make install-pi     PLUGIN=reviewers,wiki_keeper
+make uninstall-codex PLUGIN=journal
+```
+
+`PLUGIN=` works for Claude, Codex, and Pi (each installs plugins independently).
+**Gemini ignores it** — it's one extension per repo, so it's all-or-nothing; control
+which plugins exist on Gemini via each plugin's `meta.yaml` `harnesses:` field instead.
+
 Other targets: `make build` (regenerate all manifests, no install), `make
 uninstall-<harness>`, `make validate`, `make clean`, `make help`.
 

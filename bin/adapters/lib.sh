@@ -63,10 +63,12 @@ with open(sys.argv[2], "w") as f:
 PY
 }
 
-# plugins_list [name] -> one plugin dir-name per line (all plugins, or just <name>)
+# plugins_list [names] -> one plugin dir-name per line.
+# With no arg: every plugin. With an arg: a comma-separated list (whitespace
+# tolerant, e.g. "reviewers, wiki_keeper"). Blank entries are dropped by callers.
 plugins_list() {
   if [ -n "${1:-}" ]; then
-    echo "$1"
+    printf '%s\n' "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
   else
     local d
     for d in "$repo_root"/plugins/*/; do basename "$d"; done
