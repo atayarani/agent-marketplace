@@ -12,7 +12,7 @@ flagged.) Update this file when you change cross-harness behaviour.
 |---|---|---|---|---|---|---|---|
 | **Claude** | symlink `plugins/<name>` → `~/.claude/skills/<name>` | live | `PREFIX` (+ `--plugin-dir`) | ✅ | ✅ | ✅ full | ✅ native |
 | **Codex** | `plugin marketplace add` + `plugin add` | **snapshot copy** | `CODEX_HOME` | ✅ | ✅ | ⚠️ prompt-only | ❓ untested |
-| **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ✅ prompt + write/edit (shell bypasses) | ❌ preview/diff format |
+| **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ✅ prompt + write/edit (shell bypasses) | ✅ (adapter drops `tools:`) |
 | **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ✅ via TS bridge | ⚠️ pi-subagents (unverified) |
 
 ## Claude Code (2.1.170)
@@ -140,11 +140,13 @@ flagged.) Update this file when you change cross-harness behaviour.
    no native shell-hook mechanism, but the bridge maps its `tool_call`/`input` events
    onto the Claude protocol and runs the scripts (verified). Shell-redirect writes
    bypass it, as elsewhere.
-3. **Subagent definitions are not portable.** Native only on Claude. Gemini
-   sub-agents are a preview feature with a different definition format (Claude
-   `agents/*.md` do not register — verified). Pi uses the `pi-subagents` package
-   (format unverified). Codex: untested. This is why `reviewers` can *plan* a
-   parallel review off-Claude but can't spawn the reviewer personas there.
+3. **Subagent definitions**: native on **Claude**, and now work on **Gemini** — the
+   adapter drops the Claude `tools:` string (Gemini wants a YAML tool-name array; the
+   invalid field was blocking registration), and the converted agents register and
+   expose as subagent tools (verified — all 8). Gemini subagents then inherit the
+   parent session's tools (the read-only intent stays in the system prompt). **Pi**:
+   the `pi-subagents` package — format unverified (below). **Codex**: untested. So
+   `reviewers` can spawn its reviewer personas on Claude + Gemini; Pi/Codex are the gaps.
 4. **`bm` is excluded from Gemini** (`harnesses: [claude, codex, pi]`) — its
    `server/` daemon can't resolve through Gemini's flat namespace and `bm/audit`
    would collide with `wiki_keeper/audit`.

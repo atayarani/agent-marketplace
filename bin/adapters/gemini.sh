@@ -11,8 +11,8 @@
 #     from <home>/.gemini/extensions/. `gemini extensions link <dir>` symlinks it (live).
 #   - commands/<sub>/<cmd>.toml -> /<sub>:<cmd>   (TOML, dir path -> colon namespace)
 #   - skills/<name>/SKILL.md     -> <name> skill   (Claude-compatible SKILL.md)
-#   - agents/*.md                -> sub-agents      (preview feature)
-#   - hooks/hooks.json           -> hooks           (Phase 4; not emitted yet)
+#   - agents/*.md                -> sub-agents (Claude `tools:` string dropped so they register)
+#   - hooks/hooks.json           -> hooks      (events translated from each plugin's hooks.json)
 #   - contextFileName loads a file FROM the extension dir.
 #
 # So we generate a self-contained extension under gemini/ (gitignored at Phase 5)
@@ -125,6 +125,26 @@ print("gemini: hooks -> " + (", ".join(f"{k}({len(v)})" for k, v in merged.items
 PY
 }
 
+# gen_agent <agent.md> <out.md> : convert a Claude subagent to a Gemini subagent.
+# Gemini wants `tools` as a YAML array of Gemini tool names; our Claude
+# `tools: Read, Grep, ...` (a comma string with Claude tool names) is invalid and
+# blocks registration. Drop it -> the subagent inherits the parent session's tools
+# (the read-only intent stays enforced by the system-prompt body). name/description
+# + body carry over unchanged.
+gen_agent() {
+  [ -e "$2" ] && { echo "gemini: collision in agents/: ${2##*/}" >&2; exit 1; }
+  python3 - "$1" "$2" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+if text.startswith("---"):
+    _, fm, body = text.split("---", 2)
+    fm2 = "\n".join(l for l in fm.splitlines() if not l.strip().startswith("tools:"))
+    open(sys.argv[2], "w").write(f"---{fm2}\n---{body}")
+else:
+    open(sys.argv[2], "w").write(text)
+PY
+}
+
 build() {
   rm -rf "$EXT_DIR"
   mkdir -p "$EXT_DIR/skills" "$EXT_DIR/commands" "$EXT_DIR/agents"
@@ -152,7 +172,7 @@ JSON
     count=$((count + 1))
 
     for d in "${plugin_dir}skills"/*/;  do link_unique "${d%/}" "$EXT_DIR/skills" skills; done
-    for f in "${plugin_dir}agents"/*.md; do link_unique "$f" "$EXT_DIR/agents" agents; done
+    for f in "${plugin_dir}agents"/*.md; do gen_agent "$f" "$EXT_DIR/agents/$(basename "$f")"; done
     # commands -> commands/<plugin>/<cmd>.toml  => /<plugin>:<cmd>
     if [ -d "${plugin_dir}commands" ]; then
       for f in "${plugin_dir}commands"/*.md; do
