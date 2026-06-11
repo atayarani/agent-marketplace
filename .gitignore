@@ -10,5 +10,6 @@ __pycache__/
 /.claude-plugin/marketplace.json
 /gemini-extension.json
 /gemini/
+/bin/adapters/pi/hook-bridge/manifest.json
 
 # NOTE: plugins/*/hooks/hooks.json is hand-authored canonical content — NOT ignored.

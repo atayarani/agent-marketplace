@@ -3,8 +3,8 @@
 #
 #   bin/adapters/pi.sh <build|install|uninstall> [plugin]
 #
-#   build      No-op. Pi needs no generated manifest — it discovers SKILL.md
-#              skills straight from the filesystem. Kept so `make build` is uniform.
+#   build      Generate the hook-bridge manifest (bin/adapters/pi/hook-bridge/manifest.json).
+#              Skills/prompts need no manifest — Pi discovers those from the filesystem.
 #   install    Symlink each plugin's skills into Pi's skill-discovery dir
 #              ($INSTALL_ROOT/skills/<skill>). Pi reads Claude-compatible SKILL.md
 #              (verified: a planted SKILL.md is discovered without --skill).
@@ -132,14 +132,56 @@ uninstall_one() {
   fi
 }
 
+# --- hook bridge: Pi has no shell hooks.json, so a TS extension runs our scripts ---
+BRIDGE_SRC="$repo_root/bin/adapters/pi/hook-bridge"
+BRIDGE_DEST="$INSTALL_ROOT/extensions/hook-bridge"   # auto-discovered: ~/.pi/agent/extensions/<name>/index.ts
+
+# gen_manifest <plugin...> : write BRIDGE_SRC/manifest.json (absolute script paths)
+# so the bridge can run each plugin's Claude-format hook scripts. Working-tree only.
+gen_manifest() {
+  python3 - "$repo_root" "$@" <<'PY'
+import sys, os, json, re
+root, plugins = sys.argv[1], sys.argv[2:]
+entries = []
+for p in plugins:
+    hp = os.path.join(root, "plugins", p, "hooks", "hooks.json")
+    if not os.path.exists(hp):
+        continue
+    plugin_root = os.path.join(root, "plugins", p)
+    for event, defs in (json.load(open(hp)).get("hooks") or {}).items():
+        for d in defs:
+            for h in d.get("hooks", []):
+                m = re.search(r'\$CLAUDE_PLUGIN_ROOT(/\S*?\.sh)', h.get("command") or "")
+                if not m:
+                    continue
+                entries.append({"event": event, "matcher": d.get("matcher"),
+                                "script": plugin_root + m.group(1), "pluginRoot": plugin_root})
+out = os.path.join(root, "bin", "adapters", "pi", "hook-bridge", "manifest.json")
+os.makedirs(os.path.dirname(out), exist_ok=True)
+with open(out, "w") as f:
+    json.dump({"hooks": entries}, f, indent=2); f.write("\n")
+print(f"pi: hook-bridge manifest -> {len(entries)} hook(s)")
+PY
+}
+
+install_bridge() {
+  [ -s "$BRIDGE_SRC/manifest.json" ] || return 0     # no hooks -> no bridge
+  mkdir -p "$INSTALL_ROOT/extensions"
+  if [ -L "$BRIDGE_DEST" ]; then rm "$BRIDGE_DEST"
+  elif [ -e "$BRIDGE_DEST" ]; then echo "pi: $BRIDGE_DEST exists and is not our symlink; skipping bridge" >&2; return 0; fi
+  ln -s "$BRIDGE_SRC" "$BRIDGE_DEST"
+  echo "pi: linked hook-bridge -> $BRIDGE_DEST (auto-discovered; /reload to refresh)"
+}
+
 cmd=${1:-}
 target=${2:-}
 case "$cmd" in
-  build) echo "pi: build is a no-op (Pi discovers SKILL.md from the filesystem; no manifest to generate)"; exit 0 ;;
-  install|uninstall) ;;
+  build|install|uninstall) ;;
   *) echo "usage: $(basename "$0") <build|install|uninstall> [plugin]" >&2; exit 2 ;;
 esac
 
+# Resolve the pi-targeted plugin set (non-alias, harnesses includes pi).
+pi_plugins=()
 while IFS= read -r name; do
   [ -n "$name" ] || continue
   meta_path="$repo_root/plugins/$name/meta.yaml"
@@ -150,5 +192,19 @@ while IFS= read -r name; do
   if ! installs_on "$meta_path" "$HARNESS"; then
     echo "pi: skip $name — harnesses excludes $HARNESS"; continue
   fi
-  "${cmd}_one" "$name"
+  pi_plugins+=("$name")
 done < <(plugins_list "$target")
+
+# build (all commands): regenerate the hook-bridge manifest from the working tree.
+[ ${#pi_plugins[@]} -gt 0 ] && gen_manifest "${pi_plugins[@]}"
+
+case "$cmd" in
+  install)
+    [ ${#pi_plugins[@]} -gt 0 ] && for name in "${pi_plugins[@]}"; do install_one "$name"; done
+    install_bridge
+    ;;
+  uninstall)
+    [ ${#pi_plugins[@]} -gt 0 ] && for name in "${pi_plugins[@]}"; do uninstall_one "$name"; done
+    rm_our_symlink "$BRIDGE_DEST" "hook-bridge symlink"
+    ;;
+esac

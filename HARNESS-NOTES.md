@@ -13,7 +13,7 @@ flagged.) Update this file when you change cross-harness behaviour.
 | **Claude** | symlink `plugins/<name>` → `~/.claude/skills/<name>` | live | `PREFIX` (+ `--plugin-dir`) | ✅ | ✅ | ✅ full | ✅ native |
 | **Codex** | `plugin marketplace add` + `plugin add` | **snapshot copy** | `CODEX_HOME` | ✅ | ✅ | ⚠️ prompt-only | ❓ untested |
 | **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ✅ prompt + write/edit (shell bypasses) | ❌ preview/diff format |
-| **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ❌ needs TS bridge | ⚠️ pi-subagents (unverified) |
+| **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ✅ via TS bridge | ⚠️ pi-subagents (unverified) |
 
 ## Claude Code (2.1.170)
 
@@ -103,11 +103,17 @@ flagged.) Update this file when you change cross-harness behaviour.
 - **Sandbox**: `HOME` (Pi keys discovery off `$HOME`; `PREFIX` is unused here).
   Seed `cp ~/.pi/agent/auth.json $HOME/.pi/agent/`. Headless: `pi -p "…" --mode text`.
 - Pi reads `AGENTS.md` + `CLAUDE.md` as context (`--no-context-files` to disable).
-- **Hooks**: Pi has **no shell `hooks.json`** — only TS-callback extensions
-  (`pi.on("tool_call", …) → {block:true,reason}` ≈ PreToolUse;
-  `pi.on("before_agent_start", …)` with `event.prompt` ≈ UserPromptSubmit). Running
-  our shell hook scripts requires a TS bridge extension
-  (`bin/adapters/pi/hook-bridge/index.ts`) — **not yet built**.
+- **Hooks**: Pi has **no shell `hooks.json`** — only TS-callback extensions. The
+  repo ships a generic **bridge** (`bin/adapters/pi/hook-bridge/index.ts`) that runs
+  our Claude-format shell hook scripts unchanged: `pi.on("tool_call")` → PreToolUse
+  (maps `write`/`edit` → `Write`/`Edit`; blocks via `{block:true}`) and
+  `pi.on("input")` → UserPromptSubmit (blocks via `{action:"handled"}`;
+  `before_agent_start` can only inject, not block, so the bridge uses `input`).
+  `pi.sh` generates a manifest of hook scripts (absolute paths) and symlinks the
+  bridge into `~/.pi/agent/extensions/hook-bridge/` (auto-discovered). **Verified
+  live**: the reviewers gate blocks `deep-review` with no diff (allows a PR number /
+  non-deep-review prompt), and wiki_keeper blocks a write to `sources/raw/`. A
+  shell-redirect write still bypasses it (no `bash` matcher), as on the others.
 - **Subagents**: `pi.sh` runs `pi install npm:pi-subagents` (real package) when a
   plugin has `agents/`, but whether pi-subagents consumes Claude-format
   `agents/*.md` is **unverified**.
@@ -116,15 +122,19 @@ flagged.) Update this file when you change cross-harness behaviour.
 
 ## Cross-harness limitations (known, by design or deferred)
 
-1. **Tool-interception hooks** (wiki_keeper `protect_*`): work on **Claude** and
-   **Gemini** (the Gemini adapter remaps the matcher to `write_file|replace`, which
-   share Claude's `tool_input.file_path`; verified block). **Inert on Codex** —
+1. **Tool-interception hooks** (wiki_keeper `protect_*`): work on **Claude**,
+   **Gemini** (the adapter remaps the matcher to `write_file|replace`, which share
+   Claude's `tool_input.file_path`), and **Pi** (via the TS hook-bridge `tool_call`
+   handler) — all verified block. **Inert on Codex** —
    edits arrive as `apply_patch` (a patch string in `tool_input.command`) or a
    shell redirect, neither carrying `file_path`. **Shell writes** (`run_shell_command`
    on Gemini, shell on Codex) bypass tool hooks on every harness — a tool-name
    matcher can't catch an arbitrary `>` redirect. Covering Codex would need
    patch-string parsing (apply_patch) + is impossible for its shell path.
-2. **Pi hooks** need a TS bridge extension (deferred). No shell-hook mechanism.
+2. **Pi hooks** run via the bundled TS bridge (`bin/adapters/pi/hook-bridge`): Pi has
+   no native shell-hook mechanism, but the bridge maps its `tool_call`/`input` events
+   onto the Claude protocol and runs the scripts (verified). Shell-redirect writes
+   bypass it, as elsewhere.
 3. **Subagent definitions are not portable.** Native only on Claude. Gemini
    sub-agents are a preview feature with a different definition format (Claude
    `agents/*.md` do not register — verified). Pi uses the `pi-subagents` package
@@ -139,8 +149,8 @@ flagged.) Update this file when you change cross-harness behaviour.
 
 ## Confidence
 
-Install/registration, the reviewers prompt hook, and the Gemini `BeforeTool`
-wiki_keeper block are all **verified live** on the relevant harnesses (in sandboxed
-homes; real configs untouched). The limitations above are verified negatives, not
+Install/registration, the reviewers prompt hook (Claude/Codex/Gemini/Pi), the Gemini
+`BeforeTool` wiki_keeper block, and the Pi hook-bridge (`tool_call` + `input`) are all
+**verified live** on the relevant harnesses (in sandboxed homes; real configs untouched). The limitations above are verified negatives, not
 guesses. The only doc-derived (not behaviourally exercised) facts left are the Pi
 `pi-subagents` definition format and Codex subagent support.
