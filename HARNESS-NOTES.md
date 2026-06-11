@@ -12,7 +12,7 @@ flagged.) Update this file when you change cross-harness behaviour.
 |---|---|---|---|---|---|---|---|
 | **Claude** | symlink `plugins/<name>` → `~/.claude/skills/<name>` | live | `PREFIX` (+ `--plugin-dir`) | ✅ | ✅ | ✅ full | ✅ native |
 | **Codex** | `plugin marketplace add` + `plugin add` | **snapshot copy** | `CODEX_HOME` | ✅ | ✅ | ⚠️ prompt-only | ❓ untested |
-| **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ⚠️ prompt-only | ❌ preview/diff format |
+| **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ✅ prompt + write/edit (shell bypasses) | ❌ preview/diff format |
 | **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ❌ needs TS bridge | ⚠️ pi-subagents (unverified) |
 
 ## Claude Code (2.1.170)
@@ -80,9 +80,14 @@ flagged.) Update this file when you change cross-harness behaviour.
   (`UserPromptSubmit`→`BeforeAgent`, `PreToolUse`→`BeforeTool`;
   `$CLAUDE_PLUGIN_ROOT`→`${extensionPath}`). Verified: the reviewers `BeforeAgent`
   hook blocks/allows correctly (Claude's `{decision:"block"}` is honored).
-  Tool-interception (`BeforeTool`) is **inert** — Gemini's tool names are
-  `write_file`/`replace` (not `Edit|Write|NotebookEdit`) and the input field
-  differs. Documented limitation.
+  Tool-interception (`BeforeTool`) **works**: the adapter remaps tool-name
+  matchers (`Edit|Write|NotebookEdit` → `write_file|replace`) and Gemini's
+  `write_file`/`replace` use `tool_input.file_path` — the same field as Claude —
+  so the protect scripts (which also recognize `write_file`/`replace`) fire
+  unchanged. **Verified**: `write_file`/`replace` to `sources/raw/` is blocked
+  ("Tool execution blocked: sources/raw/ is immutable…") and the new-file-capture
+  nuance holds. Remaining gap: a `run_shell_command` redirect (shell write)
+  isn't matched and bypasses it — same as Codex.
 - **Verified registration** of commands/skills via the model-free `/commands list`
   and `/skills list` builtins. (Live command *execution* was blocked once by a
   transient Google `429 no capacity` — a server condition, not our extension.)
@@ -111,11 +116,14 @@ flagged.) Update this file when you change cross-harness behaviour.
 
 ## Cross-harness limitations (known, by design or deferred)
 
-1. **Tool-interception hooks** (wiki_keeper `protect_*`) fire **only on Claude**.
-   Codex (apply_patch/shell, no `file_path`) and Gemini (different tool
-   names/fields) don't match the `Edit|Write|NotebookEdit` matcher. A per-harness
-   tool-name + input-field remap could cover Gemini and Codex's `apply_patch`
-   path; Codex **shell** writes cannot be covered by a tool hook at all.
+1. **Tool-interception hooks** (wiki_keeper `protect_*`): work on **Claude** and
+   **Gemini** (the Gemini adapter remaps the matcher to `write_file|replace`, which
+   share Claude's `tool_input.file_path`; verified block). **Inert on Codex** —
+   edits arrive as `apply_patch` (a patch string in `tool_input.command`) or a
+   shell redirect, neither carrying `file_path`. **Shell writes** (`run_shell_command`
+   on Gemini, shell on Codex) bypass tool hooks on every harness — a tool-name
+   matcher can't catch an arbitrary `>` redirect. Covering Codex would need
+   patch-string parsing (apply_patch) + is impossible for its shell path.
 2. **Pi hooks** need a TS bridge extension (deferred). No shell-hook mechanism.
 3. **Subagent definitions are not portable.** Native only on Claude. Gemini
    sub-agents are a preview feature with a different definition format (Claude
@@ -131,8 +139,8 @@ flagged.) Update this file when you change cross-harness behaviour.
 
 ## Confidence
 
-Install/registration and the reviewers prompt hook are **verified live** on all
-relevant harnesses (in sandboxed homes; real configs untouched). The limitations
-above are verified negatives, not guesses. The only doc-derived (not
-behaviourally exercised) facts are the Pi subagent format and the deeper Gemini
-`BeforeTool` field schema.
+Install/registration, the reviewers prompt hook, and the Gemini `BeforeTool`
+wiki_keeper block are all **verified live** on the relevant harnesses (in sandboxed
+homes; real configs untouched). The limitations above are verified negatives, not
+guesses. The only doc-derived (not behaviourally exercised) facts left are the Pi
+`pi-subagents` definition format and Codex subagent support.

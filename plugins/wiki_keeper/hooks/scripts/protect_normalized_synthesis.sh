@@ -73,9 +73,10 @@ except Exception:
     sys.exit(0)
 ti = data.get("tool_input") or {}
 tool_name = data.get("tool_name") or ""
-if tool_name == "Write":
+# Tool names span harnesses: Claude Write/Edit/NotebookEdit; Gemini write_file/replace.
+if tool_name in ("Write", "write_file"):
     print(ti.get("content") or "")
-elif tool_name == "Edit":
+elif tool_name in ("Edit", "replace"):
     print(ti.get("new_string") or "")
 elif tool_name == "NotebookEdit":
     print(ti.get("new_source") or "")

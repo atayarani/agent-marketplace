@@ -76,10 +76,9 @@ PY
 # gen_hooks <plugin...> : merge each plugin's Claude hooks/hooks.json into
 # gemini/hooks/hooks.json, translating event names and ${extensionPath} command
 # paths to Gemini's model. Scripts are symlinked into gemini/hooks/scripts/<plugin>
-# by build(). NOTE: BeforeTool matchers are tool NAMES — Claude's Edit|Write|
-# NotebookEdit don't match Gemini's write_file/replace, so tool-interception hooks
-# (wiki_keeper) are inert on Gemini until remapped (see HARNESS-NOTES). The
-# reviewers BeforeAgent hook works (reads `prompt`, self-gates, emits {decision:block}).
+# by build(). BeforeTool matchers (tool NAMES) are remapped Claude->Gemini
+# (Edit|Write|NotebookEdit -> write_file|replace) so tool-interception hooks fire.
+# The reviewers BeforeAgent hook reads `prompt`, self-gates, emits {decision:block}.
 gen_hooks() {
   python3 - "$repo_root" "$@" <<'PY'
 import sys, json, os
@@ -87,6 +86,18 @@ root, plugins = sys.argv[1], sys.argv[2:]
 EVENT_MAP = {"UserPromptSubmit": "BeforeAgent", "PreToolUse": "BeforeTool",
              "PostToolUse": "AfterTool", "Stop": "AfterAgent"}
 TOOL_EVENTS = {"BeforeTool", "AfterTool"}        # only tool events carry a matcher
+# Claude tool name -> Gemini tool name (BeforeTool matcher is matched against the
+# tool name). write_file/replace use tool_input.file_path, same as Claude, so the
+# protect scripts (which now also recognize write_file/replace) work unchanged.
+TOOL_MAP = {"Edit": "replace", "MultiEdit": "replace", "Write": "write_file",
+            "NotebookEdit": None, "Read": "read_file", "Bash": "run_shell_command"}
+def remap_matcher(m):
+    out = []
+    for tok in m.split("|"):
+        g = TOOL_MAP.get(tok.strip(), tok.strip())   # unknown tokens kept as-is
+        if g:
+            out.append(g)
+    return "|".join(dict.fromkeys(out))
 merged = {}
 for p in plugins:
     hp = os.path.join(root, "plugins", p, "hooks", "hooks.json")
@@ -97,7 +108,7 @@ for p in plugins:
         for d in defs:
             nd = {}
             if gevt in TOOL_EVENTS and d.get("matcher"):
-                nd["matcher"] = d["matcher"]
+                nd["matcher"] = remap_matcher(d["matcher"])
             out_hooks = []
             for h in d.get("hooks", []):
                 cmd = (h.get("command") or "") \

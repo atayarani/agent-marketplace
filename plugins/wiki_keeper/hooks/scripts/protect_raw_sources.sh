@@ -49,15 +49,16 @@ case "$file_path" in
 esac
 
 # Path is under sources/raw/. Decide based on tool + whether the file already exists.
+# Tool names span harnesses: Claude Write/Edit/NotebookEdit; Gemini write_file/replace.
 case "$tool_name" in
-  Write)
+  Write|write_file)
     # Allow new-file capture; block overwrites of existing raws.
     if [[ ! -e "$file_path" ]]; then
       exit 0
     fi
     reason="sources/raw/ is immutable per the wiki pattern. The target file already exists; overwriting a captured raw is blocked. Set WIKI_KEEPER_ALLOW_RAW_EDITS=1 if you really mean to overwrite."
     ;;
-  Edit|NotebookEdit)
+  Edit|NotebookEdit|replace)
     reason="sources/raw/ is immutable per the wiki pattern. Edit/NotebookEdit modify existing files; raw captures must not be modified. Edit sources/normalized/ instead, or set WIKI_KEEPER_ALLOW_RAW_EDITS=1 if you really mean to modify the raw capture."
     ;;
   *)
