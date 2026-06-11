@@ -73,6 +73,47 @@ with open(out, "w") as f:
 PY
 }
 
+# gen_hooks <plugin...> : merge each plugin's Claude hooks/hooks.json into
+# gemini/hooks/hooks.json, translating event names and ${extensionPath} command
+# paths to Gemini's model. Scripts are symlinked into gemini/hooks/scripts/<plugin>
+# by build(). NOTE: BeforeTool matchers are tool NAMES — Claude's Edit|Write|
+# NotebookEdit don't match Gemini's write_file/replace, so tool-interception hooks
+# (wiki_keeper) are inert on Gemini until remapped (see HARNESS-NOTES). The
+# reviewers BeforeAgent hook works (reads `prompt`, self-gates, emits {decision:block}).
+gen_hooks() {
+  python3 - "$repo_root" "$@" <<'PY'
+import sys, json, os
+root, plugins = sys.argv[1], sys.argv[2:]
+EVENT_MAP = {"UserPromptSubmit": "BeforeAgent", "PreToolUse": "BeforeTool",
+             "PostToolUse": "AfterTool", "Stop": "AfterAgent"}
+TOOL_EVENTS = {"BeforeTool", "AfterTool"}        # only tool events carry a matcher
+merged = {}
+for p in plugins:
+    hp = os.path.join(root, "plugins", p, "hooks", "hooks.json")
+    if not os.path.exists(hp):
+        continue
+    for cevt, defs in (json.load(open(hp)).get("hooks") or {}).items():
+        gevt = EVENT_MAP.get(cevt, cevt)
+        for d in defs:
+            nd = {}
+            if gevt in TOOL_EVENTS and d.get("matcher"):
+                nd["matcher"] = d["matcher"]
+            out_hooks = []
+            for h in d.get("hooks", []):
+                cmd = (h.get("command") or "") \
+                    .replace("$CLAUDE_PLUGIN_ROOT/hooks/scripts", "${extensionPath}/hooks/scripts/" + p) \
+                    .replace("$CLAUDE_PLUGIN_ROOT", "${extensionPath}")
+                out_hooks.append({**h, "command": cmd})
+            nd["hooks"] = out_hooks
+            merged.setdefault(gevt, []).append(nd)
+out = os.path.join(root, "gemini", "hooks", "hooks.json")
+os.makedirs(os.path.dirname(out), exist_ok=True)
+with open(out, "w") as f:
+    json.dump({"hooks": merged}, f, indent=2); f.write("\n")
+print("gemini: hooks -> " + (", ".join(f"{k}({len(v)})" for k, v in merged.items()) or "none"))
+PY
+}
+
 build() {
   rm -rf "$EXT_DIR"
   mkdir -p "$EXT_DIR/skills" "$EXT_DIR/commands" "$EXT_DIR/agents"
@@ -90,7 +131,7 @@ JSON
   ln -s ../AGENTS.md "$EXT_DIR/AGENTS.md"
 
   local count=0 plugin_dir name meta d f
-  local -a skipped=()
+  local -a skipped=() hook_plugins=()
   for plugin_dir in "$repo_root"/plugins/*/; do
     name=$(basename "$plugin_dir")
     meta="${plugin_dir}meta.yaml"
@@ -107,9 +148,17 @@ JSON
         gen_command_toml "$f" "$EXT_DIR/commands/$name/$(basename "${f%.md}").toml"
       done
     fi
+    if [ -d "${plugin_dir}hooks/scripts" ]; then
+      mkdir -p "$EXT_DIR/hooks/scripts"
+      ln -s "$(python3 -c 'import os,sys;print(os.path.relpath(sys.argv[1],sys.argv[2]))' "${plugin_dir}hooks/scripts" "$EXT_DIR/hooks/scripts")" "$EXT_DIR/hooks/scripts/$name"
+      hook_plugins+=("$name")
+    fi
   done
+
+  [ ${#hook_plugins[@]} -gt 0 ] && gen_hooks "${hook_plugins[@]}"
+
   # Drop empty kind dirs so the extension stays clean.
-  for d in skills commands agents; do rmdir "$EXT_DIR/$d" 2>/dev/null || true; done
+  for d in skills commands agents hooks/scripts hooks; do rmdir "$EXT_DIR/$d" 2>/dev/null || true; done
   echo "gemini: built extension at gemini/ from $count plugin(s); skipped: ${skipped[*]:-none}"
 }
 
