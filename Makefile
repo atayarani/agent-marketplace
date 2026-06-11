@@ -59,5 +59,8 @@ clean:
 	@rm -rf plugins/*/.claude-plugin/plugin.json \
 	        plugins/*/.codex-plugin/plugin.json \
 	        .agents/plugins/marketplace.json \
-	        gemini/
-	@echo "clean: removed generated manifest artifacts"
+	        gemini/ \
+	        bin/adapters/pi/hook-bridge/manifest.json \
+	        bin/adapters/pi/agents/
+	@find . -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	@echo "clean: removed generated artifacts (all harnesses) + __pycache__"
