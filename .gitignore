@@ -1,1 +1,14 @@
 __pycache__/
+.DS_Store
+
+# Generated manifest/extension projections — built by bin/adapters/*.sh from
+# plugins/<name>/meta.yaml (+ canonical content). Never edit these by hand; run
+# `make build`. Source of truth is meta.yaml — that is the whole point of the refactor.
+/plugins/*/.claude-plugin/plugin.json
+/plugins/*/.codex-plugin/plugin.json
+/.agents/plugins/marketplace.json
+/.claude-plugin/marketplace.json
+/gemini-extension.json
+/gemini/
+
+# NOTE: plugins/*/hooks/hooks.json is hand-authored canonical content — NOT ignored.

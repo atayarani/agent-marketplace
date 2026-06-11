@@ -48,17 +48,16 @@ uninstall-%:
 	@bin/adapters/$*.sh uninstall
 
 validate: build
-	@if command -v claude >/dev/null 2>&1; then \
-	  echo "==> claude plugin validate ."; claude plugin validate .; \
-	else \
-	  echo "validate: 'claude' CLI not found; skipping"; \
-	fi
+	@command -v claude >/dev/null 2>&1 || { echo "validate: 'claude' CLI not found; skipping"; exit 0; }
+	@fail=0; for d in plugins/*/; do \
+	  [ -f "$${d}.claude-plugin/plugin.json" ] || continue; \
+	  if claude plugin validate "$${d%/}" >/dev/null 2>&1; then printf '  ok   %s\n' "$${d%/}"; \
+	  else printf '  FAIL %s\n' "$${d%/}"; claude plugin validate "$${d%/}" 2>&1 | sed 's/^/       /'; fail=1; fi; \
+	done; [ $$fail -eq 0 ] || { echo "validate: failures above" >&2; exit 1; }
 
 clean:
 	@rm -rf plugins/*/.claude-plugin/plugin.json \
 	        plugins/*/.codex-plugin/plugin.json \
 	        .agents/plugins/marketplace.json \
-	        .claude-plugin/marketplace.json \
-	        gemini-extension.json \
 	        gemini/
 	@echo "clean: removed generated manifest artifacts"

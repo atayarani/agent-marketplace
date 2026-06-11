@@ -1,62 +1,78 @@
 # agent-marketplace
 
-A personal toolkit shipping sub-plugins to [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), and [Gemini CLI](https://github.com/google-gemini/gemini-cli).
+A personal toolkit that ships sub-plugins to four coding-agent harnesses —
+[Claude Code](https://docs.claude.com/en/docs/claude-code),
+[Codex](https://github.com/openai/codex),
+[Gemini CLI](https://github.com/google-gemini/gemini-cli), and
+[Pi](https://github.com/badlogic/pi-mono).
 
-Each sub-plugin lives under `plugins/<name>/` and ships its own per-ecosystem manifests, skills, slash commands, subagents, and hooks. The repo root holds the marketplace catalogs that point at them.
+Each sub-plugin is authored **once** as paradigm-agnostic content under
+`plugins/<name>/`. One adapter per harness (`bin/adapters/<harness>.sh`)
+generates that harness's manifests from a single source (`meta.yaml`) and
+installs them. See [AGENTS.md](AGENTS.md) for how it works and
+[HARNESS-NOTES.md](HARNESS-NOTES.md) for per-harness behaviour.
 
 ## Sub-plugins
 
-| Plugin | What it does |
-|---|---|
-| [`reviewers`](plugins/reviewers/) | Parallel PR review with a selectable team of reviewers (security, performance, style). |
-| [`wiki_keeper`](plugins/wiki_keeper/) | Discipline for LLM-maintained personal wikis. Ingest sources, query the wiki, file durable insights back, audit for drift. |
+| Plugin | What it does | Harnesses |
+|---|---|---|
+| [`reviewers`](plugins/reviewers/) | Parallel PR review with a selectable team of reviewers (security, performance, style, ansible). | all |
+| [`wiki_keeper`](plugins/wiki_keeper/) | Discipline for LLM-maintained personal wikis: ingest sources, query, file durable insights back, audit for drift, enrich book/movie lists. | all |
+| [`journal`](plugins/journal/) | BuJo-style journaling across daily / weekly / monthly cadences with reflection rituals. | all |
+| [`bm`](plugins/bm/) | Raindrop-style bookmark manager: capture, enrich, and file URLs into a plain-text vault. | claude, codex, pi |
+| [`bookmark`](plugins/bookmark/) | Long-form alias of `bm` (so `/bookmark:*` works alongside `/bm:*`). | claude only |
+
+This table is the human catalog. The machine catalogs are generated build
+artifacts (not committed).
 
 ## Install
 
-### Claude Code
+Everything goes through the `Makefile`, which dispatches to the per-harness
+adapter. Install one harness or all of them:
 
 ```bash
-/plugin marketplace add atayarani/agent-marketplace
-/plugin install reviewers@agent-marketplace
-/plugin install wiki_keeper@agent-marketplace
+make install-claude     # symlinks into ~/.claude/skills/ (live edit-reflect)
+make install-codex      # codex plugin marketplace add + plugin add (snapshot copy)
+make install-gemini     # gemini extensions link (prompts twice to trust)
+make install-pi         # symlinks skills + prompt-templates into ~/.pi/agent/
+make install            # every harness that has an adapter
 ```
 
-### Codex
+Other targets: `make build` (regenerate all manifests, no install), `make
+uninstall-<harness>`, `make validate`, `make clean`, `make help`.
 
-The Codex marketplace catalog is at `.agents/plugins/marketplace.json`. Follow the Codex docs for adding a marketplace by GitHub source.
+Sandboxed dry run (Claude): `PREFIX=/tmp/mp make install-claude`, then
+`claude --plugin-dir /tmp/mp/skills/<plugin>`.
 
-### Gemini CLI
+**Per-harness notes that will bite you otherwise** (full detail in
+[HARNESS-NOTES.md](HARNESS-NOTES.md)):
 
-Gemini's extension model is one-extension-per-repo, so `gemini-extension.json` aggregates content from a single sub-plugin (currently `reviewers`). To use a different sub-plugin under Gemini, edit the extension manifest's `commands` / `skills` / `subagents` paths or aggregate via symlinks. See [`AGENTS.md`](AGENTS.md) for the rationale.
+- **Codex** copies plugins into its cache at install — edits need a re-install,
+  unlike Claude/Gemini/Pi which symlink live.
+- **Gemini** `link` prompts twice for trust on first install.
+- **`bm`** is intentionally excluded from Gemini; **`bookmark`** installs on
+  Claude only.
+- Hooks: the reviewers diff-gate works on Claude, Codex, and Gemini. Some
+  tool-interception and subagent features are Claude-only — see HARNESS-NOTES.
 
 ## Layout
 
 ```
-plugins/<name>/
-  .claude-plugin/plugin.json     Claude plugin manifest
-  .codex-plugin/plugin.json      Codex plugin manifest
-  skills/                        SKILL.md content
-  agents/                        Subagent definitions
-  commands/                      Slash command bodies
-  hooks/hooks.json               Hook config (Claude format)
-  hooks/scripts/                 Hook logic as shell scripts
-
-.claude-plugin/marketplace.json  Claude marketplace catalog
-.agents/plugins/marketplace.json Codex marketplace catalog
-gemini-extension.json            Gemini extension manifest (aggregator)
-AGENTS.md                        Project context — source of truth
-CLAUDE.md, GEMINI.md             One-line pointers to AGENTS.md
+plugins/<name>/meta.yaml + skills/ commands/ agents/ hooks/    canonical content
+bin/adapters/<harness>.sh                                       one adapter per harness
+Makefile                                                        build / install / …
+AGENTS.md                                                       project context (source of truth)
+HARNESS-NOTES.md                                                per-harness behaviour + limits
 ```
+
+Generated manifests (`.claude-plugin/`, `.codex-plugin/`, `.agents/…`,
+`gemini-extension.json`, `gemini/`) are git-ignored build artifacts — run `make
+build`, never edit them.
 
 ## Adding content
 
-See [`AGENTS.md`](AGENTS.md) for conventions and the full add-a-skill / add-a-command / add-a-subagent / add-a-hook / add-a-sub-plugin recipes.
-
-Before pushing:
-
-```bash
-claude plugin validate .
-```
+See [AGENTS.md](AGENTS.md) for the add-a-skill / command / subagent / hook /
+sub-plugin recipes. In short: author content + `meta.yaml`, then `make build`.
 
 ## License
 

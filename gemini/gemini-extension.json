@@ -1,6 +1,0 @@
-{
-  "name": "agent-marketplace",
-  "version": "0.2.0",
-  "description": "Personal toolkit shared across Claude Code, Codex, and Gemini CLI.",
-  "contextFileName": "AGENTS.md"
-}

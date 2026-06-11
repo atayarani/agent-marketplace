@@ -1,13 +1,12 @@
 # CONTEXT — cross-harness adapter refactor (resume handoff)
 
-**Last updated:** 2026-06-10 · **State:** Phases 0–3 + 2b complete on `main` (pushed).
-**Companion docs:** `REDESIGN-PLAN.md` (the full plan), `AGENTS.md` (still describes the
-*old* model — not yet rewritten; see Phase 5).
+**Last updated:** 2026-06-10 · **State:** Phases 0–5 complete on `main` (pushed). Refactor done.
 
-This file is a handoff so the refactor can resume from a different machine. The headline
-is in **VERIFIED HARNESS FACTS** below: the original plan's assumptions about Codex, Gemini,
-and Pi were wrong in several load-bearing ways. Those facts were verified against the real
-CLIs and are the most valuable thing here — trust them over the plan.
+> **Canonical in-repo docs are now [AGENTS.md](AGENTS.md)** (architecture + recipes) **and
+> [HARNESS-NOTES.md](HARNESS-NOTES.md)** (per-harness behaviour + limits). This file is the
+> historical build log / resume aid — if it disagrees with those, they win. `REDESIGN-PLAN.md`
+> is the original plan, whose Codex/Gemini/Pi assumptions were wrong in load-bearing ways (see
+> VERIFIED HARNESS FACTS below).
 
 ---
 
@@ -17,13 +16,13 @@ Goal: replace hand-authored, per-harness manifests with **one canonical source p
 (`plugins/<name>/meta.yaml`) + **one adapter per harness** (`bin/adapters/<h>.sh`) driven by a
 `Makefile`. Generated manifests become gitignored build artifacts (that flip happens in Phase 5).
 
-- **Done & committed (Phases 0–3 + 2b):** meta.yaml authoring, Claude/Codex/Gemini/Pi adapters,
-  shared `lib.sh`, `Makefile`, `sync-gemini.sh` shim, and the Gemini adapter rebuilt for the real
-  0.45 extension model (commands + skills verified registered).
-- **Remaining:** **Phase 4** (Codex hook fixes + Gemini/Pi hooks + cross-harness agent definitions),
-  **Phase 5** (gitignore-flip + rewrite `AGENTS.md`/`README.md` + add `HARNESS-NOTES.md`).
+- **Done & committed (Phases 0–5):** meta.yaml authoring, Claude/Codex/Gemini/Pi adapters,
+  shared `lib.sh`, `Makefile`, the Gemini extension rebuild, the portable reviewers hook
+  (Claude+Codex+Gemini), and the gitignore-flip + doc rewrite (AGENTS.md, README.md, HARNESS-NOTES.md).
+- **Remaining:** nothing required. Deferred-as-documented limitations (see HARNESS-NOTES):
+  tool-interception hooks off-Claude, the Pi hook TS-bridge, and non-portable subagent definitions.
 - **All four CLIs are installed on this dev machine** (the plan wrongly assumed Codex/Gemini
-  were absent): Claude 2.1.170, codex-cli 0.139.0, gemini 0.45.3, pi 0.79.0.
+  were absent): Claude 2.1.170, codex-cli 0.139.0, gemini 0.45.3, pi 0.79.1.
 
 ---
 
@@ -36,8 +35,8 @@ Goal: replace hand-authored, per-harness manifests with **one canonical source p
 | 2 | `codex.sh` + `gemini.sh` (install mechanism) | ✅ done, verified live in sandbox homes |
 | 3 | `pi.sh` (skills + commands→prompt-templates) | ✅ done, verified live |
 | **2b** | **Gemini adapter redesign (real 0.45 model)** | ✅ done, verified live (10 commands + 11 skills register; `gemini extensions validate` passes) |
-| **4** | **Cross-harness hooks + agent definitions** | ⬜ TODO (2 verified Codex defects; Gemini hooks feasible; agent defs non-portable) |
-| **5** | **Flip generated artifacts to gitignored + rewrite docs** | ⬜ TODO |
+| **4** | **Cross-harness hooks + agent definitions** | ✅ done — reviewers hook portable to Claude+Codex+Gemini; tool-interception / Pi-bridge / subagents deferred (documented in HARNESS-NOTES) |
+| **5** | **Flip artifacts to gitignored + rewrite docs** | ✅ done — generated manifests untracked; AGENTS.md/README.md rewritten; HARNESS-NOTES.md added |
 
 ---
 

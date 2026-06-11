@@ -1,1 +1,0 @@
-../../plugins/reviewers/agents/ansible-reviewer.md

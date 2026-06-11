@@ -1,1 +1,0 @@
-../../plugins/wiki_keeper/agents/wiki-auditor.md
