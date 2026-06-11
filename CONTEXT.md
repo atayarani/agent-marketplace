@@ -19,9 +19,10 @@ Goal: replace hand-authored, per-harness manifests with **one canonical source p
 - **Done & committed (Phases 0–5):** meta.yaml authoring, Claude/Codex/Gemini/Pi adapters,
   shared `lib.sh`, `Makefile`, the Gemini extension rebuild, the portable reviewers hook
   (Claude+Codex+Gemini), and the gitignore-flip + doc rewrite (AGENTS.md, README.md, HARNESS-NOTES.md).
-- **Remaining:** nothing required. Deferred-as-documented limitations (see HARNESS-NOTES):
-  Codex tool-interception (apply_patch/shell) and non-portable subagent definitions.
-  (Gemini tool-interception and the Pi hook-bridge are now built + verified.)
+- **Remaining:** nothing required. Only Codex-specific gaps are left, both documented in
+  HARNESS-NOTES: tool-interception (apply_patch/shell — investigated, opaque hook model) and
+  subagents. Everything else is built + verified — Gemini tool-interception, the Pi hook-bridge,
+  and subagent portability to Gemini + Pi.
 - **All four CLIs are installed on this dev machine** (the plan wrongly assumed Codex/Gemini
   were absent): Claude 2.1.170, codex-cli 0.139.0, gemini 0.45.3, pi 0.79.1.
 

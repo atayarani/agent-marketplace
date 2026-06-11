@@ -13,7 +13,7 @@ flagged.) Update this file when you change cross-harness behaviour.
 | **Claude** | symlink `plugins/<name>` → `~/.claude/skills/<name>` | live | `PREFIX` (+ `--plugin-dir`) | ✅ | ✅ | ✅ full | ✅ native |
 | **Codex** | `plugin marketplace add` + `plugin add` | **snapshot copy** | `CODEX_HOME` | ✅ | ✅ | ⚠️ prompt-only | ❓ untested |
 | **Gemini** | `extensions link <repo>/gemini` | live | `HOME` | ✅ | ✅ (TOML) | ✅ prompt + write/edit (shell bypasses) | ✅ (adapter drops `tools:`) |
-| **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ✅ via TS bridge | ⚠️ pi-subagents (unverified) |
+| **Pi** | symlink into `~/.pi/agent/{skills,prompts}` | live | `HOME` | ✅ | ✅ (prompt-templates) | ✅ via TS bridge | ✅ (converted → `agents/`) |
 
 ## Claude Code (2.1.170)
 
@@ -119,9 +119,13 @@ flagged.) Update this file when you change cross-harness behaviour.
   live**: the reviewers gate blocks `deep-review` with no diff (allows a PR number /
   non-deep-review prompt), and wiki_keeper blocks a write to `sources/raw/`. A
   shell-redirect write still bypasses it (no `bash` matcher), as on the others.
-- **Subagents**: `pi.sh` runs `pi install npm:pi-subagents` (real package) when a
-  plugin has `agents/`, but whether pi-subagents consumes Claude-format
-  `agents/*.md` is **unverified**.
+- **Subagents**: Pi subagents are `agents/*.md` discovered from `~/.pi/agent/agents/`
+  (`name`/`description`/`tools`/`model` + body), run as isolated sub-processes by a
+  subagent extension. `pi.sh` **converts** each Claude agent (maps tool names to
+  lowercase Pi names: `Read`→`read`, `Grep`→`grep`, `Glob`→`find`, `Bash`→`bash`)
+  and symlinks it into `~/.pi/agent/agents/`, and runs `pi install npm:pi-subagents`
+  (the consumer) when a plugin has `agents/`. **Verified**: all converted agents are
+  discovered by Pi's reference subagent extension (which reads the same standard dir).
 - Bundled docs: `<brew cellar>/pi-coding-agent/<v>/…/pi-coding-agent/docs/`
   (`skills.md`, `prompt-templates.md`, `extensions.md`, `examples/extensions/`).
 
@@ -140,13 +144,15 @@ flagged.) Update this file when you change cross-harness behaviour.
    no native shell-hook mechanism, but the bridge maps its `tool_call`/`input` events
    onto the Claude protocol and runs the scripts (verified). Shell-redirect writes
    bypass it, as elsewhere.
-3. **Subagent definitions**: native on **Claude**, and now work on **Gemini** — the
-   adapter drops the Claude `tools:` string (Gemini wants a YAML tool-name array; the
-   invalid field was blocking registration), and the converted agents register and
-   expose as subagent tools (verified — all 8). Gemini subagents then inherit the
-   parent session's tools (the read-only intent stays in the system prompt). **Pi**:
-   the `pi-subagents` package — format unverified (below). **Codex**: untested. So
-   `reviewers` can spawn its reviewer personas on Claude + Gemini; Pi/Codex are the gaps.
+3. **Subagent definitions** work on **Claude** (native), **Gemini**, and **Pi** —
+   each via a small per-harness conversion of the same Claude `agents/*.md`:
+   - Gemini: drop the Claude `tools:` string (Gemini wants a YAML tool-name array;
+     the invalid field blocked registration). Converted agents register and expose
+     as subagent tools (verified — all 8); they inherit the parent session's tools.
+   - Pi: map tool names to lowercase Pi names and place under `~/.pi/agent/agents/`;
+     verified discovered by Pi's reference subagent extension (consumer: pi-subagents).
+   **Codex**: untested (its hook/agent model proved opaque — see above). So
+   `reviewers` can spawn its personas on Claude, Gemini, and Pi; Codex is the lone gap.
 4. **`bm` is excluded from Gemini** (`harnesses: [claude, codex, pi]`) — its
    `server/` daemon can't resolve through Gemini's flat namespace and `bm/audit`
    would collide with `wiki_keeper/audit`.

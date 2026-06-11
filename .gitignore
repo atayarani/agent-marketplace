@@ -11,5 +11,6 @@ __pycache__/
 /gemini-extension.json
 /gemini/
 /bin/adapters/pi/hook-bridge/manifest.json
+/bin/adapters/pi/agents/
 
 # NOTE: plugins/*/hooks/hooks.json is hand-authored canonical content — NOT ignored.

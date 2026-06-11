@@ -173,6 +173,72 @@ install_bridge() {
   echo "pi: linked hook-bridge -> $BRIDGE_DEST (auto-discovered; /reload to refresh)"
 }
 
+# --- Pi subagents: convert Claude agents -> Pi format under ~/.pi/agent/agents/ ---
+# Pi subagents are agents/*.md (name/description/tools/model + body) discovered from
+# ~/.pi/agent/agents/ and run as isolated sub-processes by a subagent extension
+# (pi-subagents, installed per-plugin when agents/ is present). `tools` must be a
+# comma string of LOWERCASE Pi tool names — verified discovered by Pi's reference
+# subagent extension.
+agents_dir="$INSTALL_ROOT/agents"
+AGENTS_BUILD="$repo_root/bin/adapters/pi/agents"   # generated, gitignored
+
+gen_agent() {            # <src.md> <dest.md> : Claude agent -> Pi agent (map tool names)
+  python3 - "$1" "$2" <<'PY'
+import sys
+MAP = {"read":"read","write":"write","edit":"edit","multiedit":"edit","bash":"bash",
+       "grep":"grep","glob":"find","ls":"ls"}
+src, dest = sys.argv[1], sys.argv[2]
+text = open(src).read()
+if text.startswith("---"):
+    _, fm, body = text.split("---", 2)
+    out = []
+    for line in fm.splitlines():
+        s = line.strip()
+        if s.lower().startswith("tools:"):
+            toks = [t.strip().lower() for t in s.split(":", 1)[1].split(",") if t.strip()]
+            out.append("tools: " + ", ".join(MAP.get(t, t) for t in toks))
+        else:
+            out.append(line)
+    open(dest, "w").write("---" + "\n".join(out) + "\n---" + body)
+else:
+    open(dest, "w").write(text)
+PY
+}
+
+gen_agents() {           # <plugin...> : regenerate AGENTS_BUILD from pi-targeted plugins
+  rm -rf "$AGENTS_BUILD"
+  local p f adir n=0
+  for p in "$@"; do
+    adir="$repo_root/plugins/$p/agents"
+    [ -d "$adir" ] || continue
+    mkdir -p "$AGENTS_BUILD"
+    for f in "$adir"/*.md; do [ -e "$f" ] || continue; gen_agent "$f" "$AGENTS_BUILD/$(basename "$f")"; n=$((n + 1)); done
+  done
+  [ "$n" -gt 0 ] && echo "pi: converted $n subagent(s) for Pi (consumer: pi-subagents)"
+}
+
+install_agents() {
+  [ -d "$AGENTS_BUILD" ] || return 0
+  mkdir -p "$agents_dir"
+  local f dest
+  for f in "$AGENTS_BUILD"/*.md; do
+    [ -e "$f" ] || continue
+    dest="$agents_dir/$(basename "$f")"
+    if [ -L "$dest" ]; then rm "$dest"
+    elif [ -e "$dest" ]; then echo "pi: $dest exists and is not our symlink; skipping" >&2; continue; fi
+    ln -s "$f" "$dest"; echo "pi: linked subagent $(basename "${f%.md}") -> $dest"
+  done
+}
+
+uninstall_agents() {
+  [ -d "$AGENTS_BUILD" ] || return 0
+  local f
+  for f in "$AGENTS_BUILD"/*.md; do
+    [ -e "$f" ] || continue
+    rm_our_symlink "$agents_dir/$(basename "$f")" "subagent symlink"
+  done
+}
+
 cmd=${1:-}
 target=${2:-}
 case "$cmd" in
@@ -195,16 +261,18 @@ while IFS= read -r name; do
   pi_plugins+=("$name")
 done < <(plugins_list "$target")
 
-# build (all commands): regenerate the hook-bridge manifest from the working tree.
-[ ${#pi_plugins[@]} -gt 0 ] && gen_manifest "${pi_plugins[@]}"
+# build (all commands): regenerate the hook-bridge manifest + converted subagents (working tree).
+[ ${#pi_plugins[@]} -gt 0 ] && { gen_manifest "${pi_plugins[@]}"; gen_agents "${pi_plugins[@]}"; }
 
 case "$cmd" in
   install)
     [ ${#pi_plugins[@]} -gt 0 ] && for name in "${pi_plugins[@]}"; do install_one "$name"; done
     install_bridge
+    install_agents
     ;;
   uninstall)
     [ ${#pi_plugins[@]} -gt 0 ] && for name in "${pi_plugins[@]}"; do uninstall_one "$name"; done
     rm_our_symlink "$BRIDGE_DEST" "hook-bridge symlink"
+    uninstall_agents
     ;;
 esac
