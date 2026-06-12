@@ -122,8 +122,8 @@ human-facing catalog is the plugin table in [README.md](README.md).
   under). Keep descriptions tight and trigger-focused.
 - Content stays portable: no hardcoded paths, no machine-specific assumptions, no
   secrets. Content runs on machines we don't control.
-- `AGENTS.md` is the source of truth for project context; `CLAUDE.md` / `GEMINI.md`
-  are pointer files — edit this one.
+- `AGENTS.md` is the source of truth for project context — edit this one. `CLAUDE.md`
+  auto-imports it (`@AGENTS.md`); `GEMINI.md` is a prose pointer.
 
 ## Working in this repo
 
